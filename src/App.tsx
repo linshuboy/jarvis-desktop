@@ -1,6 +1,13 @@
 import { startTransition, useEffect, useMemo, useState } from 'react'
 
-import { clearRuntimeToken, getDesktopSnapshot, setRuntimeToken, validateDesktopConfig } from './bridge'
+import {
+  clearRuntimeToken,
+  getDesktopSnapshot,
+  quitDesktopApplication,
+  setRuntimeToken,
+  setDesktopAutostart,
+  validateDesktopConfig,
+} from './bridge'
 import type { ConfigValidation, DesktopSnapshot } from './types'
 
 function formatTimestamp(value: string): string {
@@ -157,6 +164,33 @@ export default function App() {
     }
   }
 
+  async function handleSetAutostart(enabled: boolean) {
+    setActionPending(true)
+    setFlash('')
+    setError('')
+    try {
+      await setDesktopAutostart(enabled)
+      setFlash(enabled ? 'App 登录自启已开启' : 'App 登录自启已关闭')
+      await refreshSnapshot()
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '更新 App 自启状态失败')
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  async function handleQuitApplication() {
+    setActionPending(true)
+    setFlash('')
+    setError('')
+    try {
+      await quitDesktopApplication()
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '退出 App 失败')
+      setActionPending(false)
+    }
+  }
+
   const configValidation: ConfigValidation | null = snapshot?.config_validation ?? null
 
   return (
@@ -168,8 +202,8 @@ export default function App() {
             <p className="eyebrow">Batch E / macOS App + Helper</p>
             <h1>JARVIS Desktop</h1>
             <p className="hero-copy">
-              这版桌面壳只做人机交互，不接管 `host.*` 执行。helper 仍保持单条 WS 长连接与 `host.main`
-              真实执行面。
+              这版桌面壳负责用户交互和 helper 生命周期；helper 仍保持单条 WS 长连接与 `host.main`
+              真实执行面，真正退出 App 时会一起停止。
             </p>
           </div>
           <div className="hero-meta">
@@ -178,6 +212,9 @@ export default function App() {
             </span>
             <span className={snapshot ? pairingTone(snapshot.status.pairing_state) : 'pill'}>
               {snapshot?.status.pairing_state ?? 'unknown'}
+            </span>
+            <span className="pill">
+              {snapshot ? `Helper ${snapshot.helper_management.mode}` : 'Helper 托管中'}
             </span>
           </div>
         </section>
@@ -207,51 +244,120 @@ export default function App() {
             {loading ? (
               <p className="muted">正在读取 helper 状态…</p>
             ) : snapshot ? (
-              <dl className="detail-list">
-                <div>
-                  <dt>配对状态</dt>
-                  <dd>{snapshot.status.pairing_state}</dd>
+              <>
+                <dl className="detail-list">
+                  <div>
+                    <dt>配对状态</dt>
+                    <dd>{snapshot.status.pairing_state}</dd>
+                  </div>
+                  <div>
+                    <dt>Has Token</dt>
+                    <dd>{snapshot.status.has_runtime_token ? 'yes' : 'no'}</dd>
+                  </div>
+                  <div>
+                    <dt>Config Path</dt>
+                    <dd>{snapshot.status.config_path}</dd>
+                  </div>
+                  <div>
+                    <dt>Control Socket</dt>
+                    <dd>{snapshot.status.control_socket_path || '未启用'}</dd>
+                  </div>
+                  <div>
+                    <dt>管理模式</dt>
+                    <dd>{snapshot.helper_management.mode}</dd>
+                  </div>
+                  <div>
+                    <dt>State Path</dt>
+                    <dd>{snapshot.status.state_path}</dd>
+                  </div>
+                  <div>
+                    <dt>Data Root</dt>
+                    <dd>{snapshot.helper_management.data_root}</dd>
+                  </div>
+                  <div>
+                    <dt>Helper PID</dt>
+                    <dd>{snapshot.status.helper_pid || '未检测到'}</dd>
+                  </div>
+                  <div>
+                    <dt>在线状态</dt>
+                    <dd>{snapshot.status.online ? 'online' : 'offline'}</dd>
+                  </div>
+                  <div>
+                    <dt>Hostd Version</dt>
+                    <dd>{snapshot.version.version}</dd>
+                  </div>
+                  <div>
+                    <dt>Hostd Binary</dt>
+                    <dd>{snapshot.hostd_bin_path || '未解析到'}</dd>
+                  </div>
+                  <div>
+                    <dt>Commit</dt>
+                    <dd>{snapshot.version.commit}</dd>
+                  </div>
+                </dl>
+                {snapshot.helper_management.startup_error ? <p className="flash flash-error">{snapshot.helper_management.startup_error}</p> : null}
+              </>
+            ) : null}
+          </article>
+
+          <article className="glass-card">
+            <div className="card-header">
+              <h2>App Session</h2>
+              <span className="micro-note">关闭窗口不会退出应用；如需真正结束会话，请使用这里的退出按钮。</span>
+            </div>
+            {snapshot ? (
+              <>
+                <dl className="detail-list">
+                  <div>
+                    <dt>Close Action</dt>
+                    <dd>{snapshot.app_close_action}</dd>
+                  </div>
+                  <div>
+                    <dt>Background Launch</dt>
+                    <dd>{snapshot.app_background_launch ? 'yes' : 'no'}</dd>
+                  </div>
+                  <div>
+                    <dt>Login Autostart</dt>
+                    <dd>{snapshot.app_autostart.supported ? (snapshot.app_autostart.enabled ? 'enabled' : 'disabled') : 'unsupported'}</dd>
+                  </div>
+                  <div>
+                    <dt>Autostart Entry</dt>
+                    <dd>{snapshot.app_autostart.entry_path || '未配置'}</dd>
+                  </div>
+                  <div>
+                    <dt>App Binary</dt>
+                    <dd>{snapshot.app_autostart.target_path || '未解析到'}</dd>
+                  </div>
+                </dl>
+                <div className="button-row">
+                  <button
+                    disabled={actionPending || !snapshot.app_autostart.supported || snapshot.app_autostart.enabled}
+                    onClick={() => void handleSetAutostart(true)}
+                    type="button"
+                  >
+                    开启 App 自启
+                  </button>
+                  <button
+                    className="button-muted"
+                    disabled={actionPending || !snapshot.app_autostart.supported || !snapshot.app_autostart.enabled}
+                    onClick={() => void handleSetAutostart(false)}
+                    type="button"
+                  >
+                    关闭 App 自启
+                  </button>
+                  <button className="button-muted" disabled={actionPending} onClick={() => void handleQuitApplication()} type="button">
+                    退出 App
+                  </button>
                 </div>
-                <div>
-                  <dt>Has Token</dt>
-                  <dd>{snapshot.status.has_runtime_token ? 'yes' : 'no'}</dd>
-                </div>
-                <div>
-                  <dt>Config Path</dt>
-                  <dd>{snapshot.status.config_path}</dd>
-                </div>
-                <div>
-                  <dt>Control Socket</dt>
-                  <dd>{snapshot.status.control_socket_path || '未启用'}</dd>
-                </div>
-                <div>
-                  <dt>State Path</dt>
-                  <dd>{snapshot.status.state_path}</dd>
-                </div>
-                <div>
-                  <dt>Helper PID</dt>
-                  <dd>{snapshot.status.helper_pid || '未检测到'}</dd>
-                </div>
-                <div>
-                  <dt>在线状态</dt>
-                  <dd>{snapshot.status.online ? 'online' : 'offline'}</dd>
-                </div>
-                <div>
-                  <dt>Hostd Version</dt>
-                  <dd>{snapshot.version.version}</dd>
-                </div>
-                <div>
-                  <dt>Commit</dt>
-                  <dd>{snapshot.version.commit}</dd>
-                </div>
-              </dl>
+                {snapshot.app_autostart.last_error ? <p className="flash flash-error">{snapshot.app_autostart.last_error}</p> : null}
+              </>
             ) : null}
           </article>
 
           <article className="glass-card">
             <div className="card-header">
               <h2>Token Handoff</h2>
-              <span className="micro-note">App 收到 approve 后，通过本地 bridge 调 `hostd app set-token`，由 helper 立即写入并触发 reconnect。</span>
+              <span className="micro-note">App 收到 approve 后，通过 Tauri 后端直连 helper 的 control socket，下发 token 并立即触发 reconnect。</span>
             </div>
             <label className="field">
               <span>Runtime Token</span>
@@ -272,6 +378,44 @@ export default function App() {
             </div>
             {flash ? <p className="flash flash-success">{flash}</p> : null}
             {error ? <p className="flash flash-error">{error}</p> : null}
+          </article>
+
+          <article className="glass-card">
+            <div className="card-header">
+              <h2>Helper Lifecycle</h2>
+              <span className="micro-note">GUI 版本由 App 自己拉起并托管 helper。最小化或隐藏时 helper 继续运行，真正退出 App 时会一起停止。</span>
+            </div>
+            {snapshot ? (
+              <>
+                <dl className="detail-list">
+                  <div>
+                    <dt>Mode</dt>
+                    <dd>{snapshot.helper_management.mode}</dd>
+                  </div>
+                  <div>
+                    <dt>Close Behavior</dt>
+                    <dd>{snapshot.app_close_action}</dd>
+                  </div>
+                  <div>
+                    <dt>Autostart</dt>
+                    <dd>{snapshot.app_autostart.enabled ? 'enabled' : 'disabled'}</dd>
+                  </div>
+                  <div>
+                    <dt>Background Launch</dt>
+                    <dd>{snapshot.app_background_launch ? 'yes' : 'no'}</dd>
+                  </div>
+                  <div>
+                    <dt>Helper Available</dt>
+                    <dd>{snapshot.status.helper_available ? 'yes' : 'no'}</dd>
+                  </div>
+                  <div>
+                    <dt>True Exit</dt>
+                    <dd>stops helper</dd>
+                  </div>
+                </dl>
+                {snapshot.helper_management.startup_error ? <p className="flash flash-error">{snapshot.helper_management.startup_error}</p> : null}
+              </>
+            ) : null}
           </article>
 
           <article className="glass-card wide-card">
@@ -315,11 +459,11 @@ export default function App() {
         <section className="footer-notes">
           <article className="glass-card note-card">
             <h3>Batch E 边界</h3>
-            <p>App 负责登录、配对结果展示、状态展示和通知入口；helper 继续负责 WS 主循环、心跳、重连与 `host.main` 执行。</p>
+            <p>App 负责登录、配对结果展示、状态展示与 helper 生命周期；helper 继续负责 WS 主循环、心跳、重连与 `host.main` 执行。</p>
           </article>
           <article className="glass-card note-card">
             <h3>当前 bridge</h3>
-            <p>桌面壳继续通过 Tauri 后端调用 `hostd` 本地 CLI，但 CLI 已优先接到 helper 的 control socket，不再只依赖直接改 state 文件。</p>
+            <p>实时状态和 token 下发走 Tauri Rust 直连 `hostd` control socket；helper 启动由 App 自己管理，配置校验仍调用随 App 分发的 `hostd` 本地命令。</p>
           </article>
         </section>
       </main>

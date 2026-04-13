@@ -1,4 +1,4 @@
-import type { ConfigValidation, DesktopSnapshot, PairStatus } from './types'
+import type { AppAutostartStatus, ConfigValidation, DesktopSnapshot, HelperManagementStatus, PairStatus } from './types'
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
@@ -14,9 +14,9 @@ const helperMethods = [
 let mockStatus: PairStatus = {
   bridge_mode: 'mock-web-bridge',
   helper_available: true,
-  config_path: '~/Library/Application Support/hostd/config.json',
-  state_path: '~/Library/Application Support/hostd/state.json',
-  control_socket_path: '~/Library/Application Support/hostd/control.sock',
+  config_path: '~/Library/Application Support/JARVIS Desktop/hostd/config.json',
+  state_path: '~/Library/Application Support/JARVIS Desktop/hostd/state.json',
+  control_socket_path: '~/Library/Application Support/JARVIS Desktop/hostd/control.sock',
   runtime_id: 'mock-runtime-id',
   pairing_state: 'pending',
   has_runtime_token: false,
@@ -51,6 +51,20 @@ let mockConfigValidation: ConfigValidation = {
   },
 }
 
+let mockHelperManagement: HelperManagementStatus = {
+  mode: 'app-managed',
+  data_root: '~/Library/Application Support/JARVIS Desktop/hostd',
+}
+
+let mockAutostartStatus: AppAutostartStatus = {
+  platform: 'darwin',
+  supported: true,
+  enabled: false,
+  mode: 'background',
+  entry_path: '~/Library/LaunchAgents/ai.jarvis.desktop.autostart.plist',
+  target_path: '/Applications/JARVIS Desktop.app/Contents/MacOS/jarvis-desktop',
+}
+
 async function resolveInvoke(): Promise<TauriInvoke | null> {
   try {
     const core = await import('@tauri-apps/api/core')
@@ -63,6 +77,10 @@ async function resolveInvoke(): Promise<TauriInvoke | null> {
 function buildMockSnapshot(): DesktopSnapshot {
   return {
     bridge: mockStatus.bridge_mode,
+    hostd_bin_path: '~/Library/Application Support/JARVIS Desktop/hostd/macos-aarch64/hostd',
+    app_close_action: 'hide',
+    app_background_launch: false,
+    app_autostart: { ...mockAutostartStatus },
     version: {
       version: '0.1.0',
       commit: 'dev',
@@ -70,6 +88,7 @@ function buildMockSnapshot(): DesktopSnapshot {
       go_version: 'go1.24.0',
     },
     status: { ...mockStatus },
+    helper_management: { ...mockHelperManagement },
     config_validation: mockConfigValidation.valid
       ? {
           valid: true,
@@ -133,4 +152,25 @@ export async function clearRuntimeToken(): Promise<PairStatus> {
     return { ...mockStatus }
   }
   return invoke<PairStatus>('desktop_clear_runtime_token')
+}
+
+export async function setDesktopAutostart(enabled: boolean): Promise<AppAutostartStatus> {
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    mockAutostartStatus = {
+      ...mockAutostartStatus,
+      enabled,
+      last_error: undefined,
+    }
+    return { ...mockAutostartStatus }
+  }
+  return invoke<AppAutostartStatus>('desktop_set_app_autostart', { enabled })
+}
+
+export async function quitDesktopApplication(): Promise<void> {
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    return
+  }
+  await invoke('desktop_quit_application')
 }

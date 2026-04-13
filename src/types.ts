@@ -53,9 +53,30 @@ export type ConfigValidation =
       error: string
     }
 
+export type HelperManagementStatus = {
+  mode: string
+  data_root: string
+  startup_error?: string
+}
+
+export type AppAutostartStatus = {
+  platform: string
+  supported: boolean
+  enabled: boolean
+  mode: string
+  entry_path: string
+  target_path: string
+  last_error?: string
+}
+
 export type DesktopSnapshot = {
   bridge: string
+  hostd_bin_path: string
+  app_close_action: string
+  app_background_launch: boolean
+  app_autostart: AppAutostartStatus
   version: BuildInfo
   status: PairStatus
   config_validation: ConfigValidation
+  helper_management: HelperManagementStatus
 }

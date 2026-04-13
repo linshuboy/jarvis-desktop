@@ -7,8 +7,11 @@
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4174",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "build:icons": "python3 ./scripts/generate_tauri_icons.py",
+    "build:hostd": "bash ./scripts/build_hostd.sh",
+    "tauri:dev": "npm run build:hostd && tauri dev",
+    "tauri:build": "npm run build:hostd && tauri build",
+    "tauri:build:linux": "bash ./scripts/build_linux_packages.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
