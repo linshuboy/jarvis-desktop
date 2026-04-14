@@ -78,7 +78,7 @@ let mockAutostartStatus: AppAutostartStatus = {
   enabled: false,
   mode: 'background',
   entry_path: '~/Library/LaunchAgents/ai.jarvis.desktop.autostart.plist',
-  target_path: '/Applications/JARVIS Desktop.app/Contents/MacOS/jarvis-desktop',
+  target_path: '/Applications/JARVIS Desktop.app/Contents/MacOS/JARVIS Desktop',
 }
 
 async function resolveInvoke(): Promise<TauriInvoke | null> {

@@ -101,7 +101,7 @@ fn bundled_hostd_relative_path() -> PathBuf {
 }
 
 fn resolve_hostd_bin(app: &AppHandle) -> PathBuf {
-    if let Ok(path) = env::var("JARVIS_HOSTD_BIN") {
+    if let Ok(path) = env::var("AGI_HOSTD_BIN") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
