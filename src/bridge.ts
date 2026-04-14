@@ -40,6 +40,8 @@ let mockAuth: DesktopAuthState = {
   server_url: 'https://jarvis.example.com/',
   authenticated: false,
   user: null,
+  bootstrap_init_done: true,
+  auth_error: null,
 }
 
 let mockConfigValidation: ConfigValidation = {
@@ -105,6 +107,8 @@ function buildMockSnapshot(): DesktopSnapshot {
       server_url: mockAuth.server_url,
       authenticated: mockAuth.authenticated,
       user: mockAuth.user ? { ...mockAuth.user } : null,
+      bootstrap_init_done: mockAuth.bootstrap_init_done ?? null,
+      auth_error: mockAuth.auth_error ?? null,
     },
     status: { ...mockStatus },
     helper_management: { ...mockHelperManagement },
@@ -151,6 +155,8 @@ export async function loginDesktop(serverUrl: string, username: string, password
         display_name: 'Mock User',
         role: 'system_admin',
       },
+      bootstrap_init_done: true,
+      auth_error: null,
     }
     mockStatus = {
       ...mockStatus,
@@ -170,6 +176,8 @@ export async function loginDesktop(serverUrl: string, username: string, password
         server_url: mockAuth.server_url,
         authenticated: mockAuth.authenticated,
         user: mockAuth.user ? { ...mockAuth.user } : null,
+        bootstrap_init_done: mockAuth.bootstrap_init_done ?? null,
+        auth_error: mockAuth.auth_error ?? null,
       },
     }
   }
@@ -220,9 +228,25 @@ export async function logoutDesktop(): Promise<DesktopAuthState> {
       server_url: mockAuth.server_url,
       authenticated: false,
       user: null,
+      bootstrap_init_done: mockAuth.bootstrap_init_done ?? null,
+      auth_error: null,
     }
   }
   return invoke<DesktopAuthState>('desktop_logout')
+}
+
+export async function syncDesktopAuthState(): Promise<DesktopAuthState> {
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    return {
+      server_url: mockAuth.server_url,
+      authenticated: mockAuth.authenticated,
+      user: mockAuth.user ? { ...mockAuth.user } : null,
+      bootstrap_init_done: mockAuth.bootstrap_init_done ?? null,
+      auth_error: mockAuth.auth_error ?? null,
+    }
+  }
+  return invoke<DesktopAuthState>('desktop_sync_auth_state')
 }
 
 export async function validateDesktopConfig(): Promise<ConfigValidation> {

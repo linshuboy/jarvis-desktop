@@ -16,6 +16,8 @@ export type DesktopAuthState = {
   server_url: string
   authenticated: boolean
   user: DesktopAuthUser | null
+  bootstrap_init_done?: boolean | null
+  auth_error?: string | null
 }
 
 export type DesktopLoginResult = {

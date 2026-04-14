@@ -7,9 +7,10 @@ import {
   logoutDesktop,
   quitDesktopApplication,
   setDesktopAutostart,
+  syncDesktopAuthState,
   validateDesktopConfig,
 } from './bridge'
-import type { ConfigValidation, DesktopSnapshot } from './types'
+import type { ConfigValidation, DesktopAuthState, DesktopSnapshot } from './types'
 
 function formatTimestamp(value: string): string {
   if (!value) {
@@ -50,6 +51,7 @@ function statusTone(snapshot: DesktopSnapshot | null): string {
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null)
+  const [authState, setAuthState] = useState<DesktopAuthState | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionPending, setActionPending] = useState(false)
   const [serverUrlInput, setServerUrlInput] = useState('')
@@ -90,10 +92,31 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (snapshot?.auth.server_url && serverUrlInput.trim() === '') {
-      setServerUrlInput(snapshot.auth.server_url)
+    let disposed = false
+    syncDesktopAuthState()
+      .then((next) => {
+        if (disposed) {
+          return
+        }
+        startTransition(() => {
+          setAuthState(next)
+        })
+      })
+      .catch(() => {
+        return
+      })
+    return () => {
+      disposed = true
     }
-  }, [snapshot?.auth.server_url])
+  }, [])
+
+  const effectiveAuth = authState ?? snapshot?.auth ?? null
+
+  useEffect(() => {
+    if (effectiveAuth?.server_url && serverUrlInput.trim() === '') {
+      setServerUrlInput(effectiveAuth.server_url)
+    }
+  }, [effectiveAuth?.server_url, serverUrlInput])
 
   const cards = useMemo(() => {
     if (snapshot === null) {
@@ -118,14 +141,14 @@ export default function App() {
       },
       {
         label: 'Server',
-        value: snapshot.auth.server_url || '未登录',
+        value: effectiveAuth?.server_url || '未登录',
       },
       {
         label: 'Connection',
         value: snapshot.status.connection_state || 'offline',
       },
     ]
-  }, [snapshot])
+  }, [effectiveAuth?.server_url, snapshot])
 
   async function handleValidateConfig() {
     setActionPending(true)
@@ -152,6 +175,7 @@ export default function App() {
     setError('')
     try {
       const result = await loginDesktop(serverUrlInput, usernameInput, passwordInput)
+      setAuthState(result.auth)
       setPasswordInput('')
       if (result.bind_succeeded) {
         setFlash('登录成功，当前设备已自动绑定并写入 helper')
@@ -189,7 +213,8 @@ export default function App() {
     setFlash('')
     setError('')
     try {
-      await logoutDesktop()
+      const result = await logoutDesktop()
+      setAuthState(result)
       setFlash('账号已退出，当前设备 token 已清除')
       await refreshSnapshot()
     } catch (nextError) {
@@ -403,20 +428,24 @@ export default function App() {
                 value={serverUrlInput}
               />
             </label>
-            {snapshot?.auth.authenticated ? (
+            {effectiveAuth?.authenticated ? (
               <>
                 <dl className="detail-list">
                   <div>
                     <dt>当前账号</dt>
-                    <dd>{snapshot.auth.user?.display_name || snapshot.auth.user?.username || '未知用户'}</dd>
+                    <dd>{effectiveAuth.user?.display_name || effectiveAuth.user?.username || '未知用户'}</dd>
                   </div>
                   <div>
                     <dt>User ID</dt>
-                    <dd>{snapshot.auth.user?.user_id || '未记录'}</dd>
+                    <dd>{effectiveAuth.user?.user_id || '未记录'}</dd>
                   </div>
                   <div>
                     <dt>Role</dt>
-                    <dd>{snapshot.auth.user?.role || 'unknown'}</dd>
+                    <dd>{effectiveAuth.user?.role || 'unknown'}</dd>
+                  </div>
+                  <div>
+                    <dt>服务端初始化</dt>
+                    <dd>{effectiveAuth.bootstrap_init_done === false ? '未初始化' : '已初始化'}</dd>
                   </div>
                   <div>
                     <dt>设备绑定</dt>
@@ -434,6 +463,9 @@ export default function App() {
               </>
             ) : (
               <>
+                {effectiveAuth?.bootstrap_init_done === false ? (
+                  <p className="flash flash-error">当前服务端尚未初始化。请先在 Web 端完成管理员初始化，再回到桌面端登录。</p>
+                ) : null}
                 <label className="field">
                   <span>Username</span>
                   <input
@@ -456,7 +488,13 @@ export default function App() {
                 </label>
                 <div className="button-row">
                   <button
-                    disabled={actionPending || serverUrlInput.trim() === '' || usernameInput.trim() === '' || passwordInput.trim() === ''}
+                    disabled={
+                      actionPending ||
+                      effectiveAuth?.bootstrap_init_done === false ||
+                      serverUrlInput.trim() === '' ||
+                      usernameInput.trim() === '' ||
+                      passwordInput.trim() === ''
+                    }
                     onClick={() => void handleLogin()}
                     type="button"
                   >
@@ -465,6 +503,7 @@ export default function App() {
                 </div>
               </>
             )}
+            {effectiveAuth?.auth_error ? <p className="flash flash-error">{effectiveAuth.auth_error}</p> : null}
             {flash ? <p className="flash flash-success">{flash}</p> : null}
             {error ? <p className="flash flash-error">{error}</p> : null}
           </article>
