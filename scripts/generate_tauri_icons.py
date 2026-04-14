@@ -80,6 +80,34 @@ def encode_png(size: int) -> bytes:
     )
 
 
+def encode_ico(sizes: list[int]) -> bytes:
+    images = [(size, encode_png(size)) for size in sizes]
+    header = struct.pack("<HHH", 0, 1, len(images))
+    offset = 6 + (16 * len(images))
+    entries: list[bytes] = []
+    payload = bytearray()
+
+    for size, png_bytes in images:
+        dimension = 0 if size >= 256 else size
+        entries.append(
+            struct.pack(
+                "<BBBBHHII",
+                dimension,
+                dimension,
+                0,
+                0,
+                1,
+                32,
+                len(png_bytes),
+                offset,
+            )
+        )
+        payload.extend(png_bytes)
+        offset += len(png_bytes)
+
+    return header + b"".join(entries) + bytes(payload)
+
+
 def main() -> None:
     ICONS_DIR.mkdir(parents=True, exist_ok=True)
     outputs = {
@@ -91,6 +119,8 @@ def main() -> None:
     for filename, size in outputs.items():
         (ICONS_DIR / filename).write_bytes(encode_png(size))
         print(f"generated {ICONS_DIR / filename}")
+    (ICONS_DIR / "icon.ico").write_bytes(encode_ico([32, 256]))
+    print(f"generated {ICONS_DIR / 'icon.ico'}")
 
 
 if __name__ == "__main__":
