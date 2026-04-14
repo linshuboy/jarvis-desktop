@@ -1,4 +1,12 @@
-import type { AppAutostartStatus, ConfigValidation, DesktopSnapshot, HelperManagementStatus, PairStatus } from './types'
+import type {
+  AppAutostartStatus,
+  ConfigValidation,
+  DesktopAuthState,
+  DesktopLoginResult,
+  DesktopSnapshot,
+  HelperManagementStatus,
+  PairStatus,
+} from './types'
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
@@ -26,6 +34,12 @@ let mockStatus: PairStatus = {
   online: false,
   connection_state: 'waiting_for_pairing',
   helper_pid: 4242,
+}
+
+let mockAuth: DesktopAuthState = {
+  server_url: 'https://jarvis.example.com/',
+  authenticated: false,
+  user: null,
 }
 
 let mockConfigValidation: ConfigValidation = {
@@ -87,6 +101,11 @@ function buildMockSnapshot(): DesktopSnapshot {
       build_date: '',
       go_version: 'go1.24.0',
     },
+    auth: {
+      server_url: mockAuth.server_url,
+      authenticated: mockAuth.authenticated,
+      user: mockAuth.user ? { ...mockAuth.user } : null,
+    },
     status: { ...mockStatus },
     helper_management: { ...mockHelperManagement },
     config_validation: mockConfigValidation.valid
@@ -106,6 +125,104 @@ export async function getDesktopSnapshot(): Promise<DesktopSnapshot> {
     return buildMockSnapshot()
   }
   return invoke<DesktopSnapshot>('desktop_snapshot')
+}
+
+export async function loginDesktop(serverUrl: string, username: string, password: string): Promise<DesktopLoginResult> {
+  const normalizedServerUrl = serverUrl.trim()
+  const normalizedUsername = username.trim()
+  const normalizedPassword = password.trim()
+  if (!normalizedServerUrl) {
+    throw new Error('服务地址不能为空')
+  }
+  if (!normalizedUsername) {
+    throw new Error('用户名不能为空')
+  }
+  if (!normalizedPassword) {
+    throw new Error('密码不能为空')
+  }
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    mockAuth = {
+      server_url: normalizedServerUrl.endsWith('/') ? normalizedServerUrl : `${normalizedServerUrl}/`,
+      authenticated: true,
+      user: {
+        user_id: 'mock-user-1',
+        username: normalizedUsername,
+        display_name: 'Mock User',
+        role: 'system_admin',
+      },
+    }
+    mockStatus = {
+      ...mockStatus,
+      pairing_state: 'paired',
+      has_runtime_token: true,
+      online: true,
+      connection_state: 'connected',
+      last_connected_at: new Date().toISOString(),
+      last_error: '',
+      last_gateway_url: mockAuth.server_url.replace(/^http/, 'ws').replace(/\/$/, '/ws/node'),
+    }
+    return {
+      authenticated: true,
+      bind_succeeded: true,
+      bind_error: null,
+      auth: {
+        server_url: mockAuth.server_url,
+        authenticated: mockAuth.authenticated,
+        user: mockAuth.user ? { ...mockAuth.user } : null,
+      },
+    }
+  }
+  return invoke<DesktopLoginResult>('desktop_login', {
+    serverUrl: normalizedServerUrl,
+    username: normalizedUsername,
+    password,
+  })
+}
+
+export async function bindCurrentRuntime(): Promise<PairStatus> {
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    if (!mockAuth.authenticated) {
+      throw new Error('请先登录账号')
+    }
+    mockStatus = {
+      ...mockStatus,
+      pairing_state: 'paired',
+      has_runtime_token: true,
+      online: true,
+      connection_state: 'connected',
+      last_connected_at: new Date().toISOString(),
+      last_error: '',
+    }
+    return { ...mockStatus }
+  }
+  return invoke<PairStatus>('desktop_bind_current_runtime')
+}
+
+export async function logoutDesktop(): Promise<DesktopAuthState> {
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    mockAuth = {
+      ...mockAuth,
+      authenticated: false,
+      user: null,
+    }
+    mockStatus = {
+      ...mockStatus,
+      pairing_state: 'unpaired',
+      has_runtime_token: false,
+      online: false,
+      connection_state: 'offline',
+      last_connected_at: '',
+    }
+    return {
+      server_url: mockAuth.server_url,
+      authenticated: false,
+      user: null,
+    }
+  }
+  return invoke<DesktopAuthState>('desktop_logout')
 }
 
 export async function validateDesktopConfig(): Promise<ConfigValidation> {

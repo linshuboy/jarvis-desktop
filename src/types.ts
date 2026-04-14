@@ -5,6 +5,26 @@ export type BuildInfo = {
   go_version: string
 }
 
+export type DesktopAuthUser = {
+  user_id: string
+  username: string
+  display_name?: string | null
+  role?: string | null
+}
+
+export type DesktopAuthState = {
+  server_url: string
+  authenticated: boolean
+  user: DesktopAuthUser | null
+}
+
+export type DesktopLoginResult = {
+  authenticated: boolean
+  bind_succeeded: boolean
+  bind_error?: string | null
+  auth: DesktopAuthState
+}
+
 export type PairStatus = {
   bridge_mode: string
   helper_available: boolean
@@ -76,6 +96,7 @@ export type DesktopSnapshot = {
   app_background_launch: boolean
   app_autostart: AppAutostartStatus
   version: BuildInfo
+  auth: DesktopAuthState
   status: PairStatus
   config_validation: ConfigValidation
   helper_management: HelperManagementStatus

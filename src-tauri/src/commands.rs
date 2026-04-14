@@ -8,6 +8,10 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use reqwest::blocking::{Client, Response};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::StatusCode;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
@@ -23,6 +27,58 @@ struct HostdPaths {
     config_path: PathBuf,
     state_path: PathBuf,
     control_socket_path: PathBuf,
+    auth_session_path: PathBuf,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+struct DesktopAuthUser {
+    user_id: String,
+    username: String,
+    display_name: Option<String>,
+    role: Option<String>,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+struct DesktopAuthSession {
+    server_url: Option<String>,
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    user: Option<DesktopAuthUser>,
+}
+
+#[derive(Deserialize)]
+struct AuthBootstrapStatus {
+    init_done: bool,
+}
+
+#[derive(Deserialize)]
+struct AuthResponse {
+    access_token: String,
+    refresh_token: String,
+    user: DesktopAuthUser,
+}
+
+#[derive(Deserialize)]
+struct CreateBindingInviteResponse {
+    invite_url: Option<String>,
+    invite_code: Option<String>,
+}
+
+#[derive(Debug)]
+enum ApiError {
+    Http { status: StatusCode, message: String },
+    Transport(String),
+    Decode(String),
+}
+
+impl ApiError {
+    fn message(&self) -> String {
+        match self {
+            Self::Http { message, .. } => message.clone(),
+            Self::Transport(message) => message.clone(),
+            Self::Decode(message) => message.clone(),
+        }
+    }
 }
 
 fn hostd_binary_name() -> &'static str {
@@ -171,11 +227,16 @@ fn resolve_hostd_paths(app: &AppHandle) -> Result<HostdPaths, String> {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
+    let auth_session_path = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("auth-session.json");
     Ok(HostdPaths {
         data_root,
         config_path,
         state_path,
         control_socket_path,
+        auth_session_path,
     })
 }
 
@@ -362,6 +423,68 @@ fn write_state_file(path: &Path, state: &PersistedState) -> Result<(), String> {
         .map_err(|error| format!("failed to write state file {}: {}", path.display(), error))
 }
 
+fn read_auth_session(path: &Path) -> Result<DesktopAuthSession, String> {
+    let content = match fs::read(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DesktopAuthSession::default())
+        }
+        Err(error) => {
+            return Err(format!(
+                "failed to read desktop auth session {}: {}",
+                path.display(),
+                error
+            ))
+        }
+    };
+    serde_json::from_slice::<DesktopAuthSession>(&content).map_err(|error| {
+        format!(
+            "failed to decode desktop auth session {}: {}",
+            path.display(),
+            error
+        )
+    })
+}
+
+fn write_auth_session(path: &Path, session: &DesktopAuthSession) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create desktop auth session directory {}: {}",
+                parent.display(),
+                error
+            )
+        })?;
+    }
+    let mut payload = serde_json::to_vec_pretty(session).map_err(|error| {
+        format!(
+            "failed to encode desktop auth session {}: {}",
+            path.display(),
+            error
+        )
+    })?;
+    payload.push(b'\n');
+    fs::write(path, payload).map_err(|error| {
+        format!(
+            "failed to write desktop auth session {}: {}",
+            path.display(),
+            error
+        )
+    })
+}
+
+fn auth_state_json(session: &DesktopAuthSession) -> Value {
+    json!({
+        "server_url": session.server_url.clone().unwrap_or_default(),
+        "authenticated": session
+            .access_token
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false),
+        "user": session.user.clone(),
+    })
+}
+
 fn ensure_runtime_id(state: &mut PersistedState) -> Result<(), String> {
     let current = state.runtime_id.as_deref().unwrap_or("").trim().to_string();
     if !current.is_empty() {
@@ -460,6 +583,197 @@ fn normalize_pairing_state(value: Option<&str>) -> String {
         "paired" => String::from("paired"),
         "revoked" => String::from("revoked"),
         _ => String::from("unpaired"),
+    }
+}
+
+fn normalize_server_url(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(String::from("server_url is required"));
+    }
+    let with_scheme = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{}", trimmed)
+    };
+    let mut url = Url::parse(&with_scheme)
+        .map_err(|error| format!("invalid server_url {}: {}", trimmed, error))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(format!(
+                "server_url scheme must be http or https, got {}",
+                scheme
+            ))
+        }
+    }
+    if url.host_str().is_none() {
+        return Err(String::from("server_url host is required"));
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    let path = url.path().trim_end_matches('/').to_string();
+    if path.is_empty() {
+        url.set_path("/");
+    } else {
+        url.set_path(format!("{}/", path).as_str());
+    }
+    Ok(url.to_string())
+}
+
+fn api_url(server_url: &str, path: &str) -> Result<Url, String> {
+    let base = Url::parse(server_url)
+        .map_err(|error| format!("invalid normalized server_url {}: {}", server_url, error))?;
+    base.join(path).map_err(|error| {
+        format!(
+            "failed to resolve API path {} from {}: {}",
+            path, server_url, error
+        )
+    })
+}
+
+fn build_http_client() -> Result<Client, String> {
+    Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|error| format!("failed to build desktop HTTP client: {}", error))
+}
+
+fn parse_api_response(response: Response) -> Result<Value, ApiError> {
+    let status = response.status();
+    let body = response.text().map_err(|error| {
+        ApiError::Transport(format!("failed to read API response body: {}", error))
+    })?;
+    let payload = if body.trim().is_empty() {
+        Value::Object(Map::new())
+    } else {
+        serde_json::from_str::<Value>(&body).map_err(|error| {
+            ApiError::Decode(format!("failed to decode API response body: {}", error))
+        })?
+    };
+    if !status.is_success() {
+        let message = payload
+            .get("detail")
+            .and_then(Value::as_str)
+            .or_else(|| payload.get("error").and_then(Value::as_str))
+            .or_else(|| payload.get("message").and_then(Value::as_str))
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("request failed with status {}", status.as_u16()));
+        return Err(ApiError::Http { status, message });
+    }
+    Ok(payload)
+}
+
+fn get_json(server_url: &str, path: &str) -> Result<Value, ApiError> {
+    let client = build_http_client().map_err(ApiError::Transport)?;
+    let url = api_url(server_url, path).map_err(ApiError::Transport)?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|error| ApiError::Transport(format!("failed to call API: {}", error)))?;
+    parse_api_response(response)
+}
+
+fn post_json(
+    server_url: &str,
+    path: &str,
+    bearer_token: Option<&str>,
+    payload: &Value,
+) -> Result<Value, ApiError> {
+    let client = build_http_client().map_err(ApiError::Transport)?;
+    let url = api_url(server_url, path).map_err(ApiError::Transport)?;
+    let mut request = client.post(url).header(CONTENT_TYPE, "application/json");
+    if let Some(token) = bearer_token {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            request = request.header(AUTHORIZATION, format!("Bearer {}", trimmed));
+        }
+    }
+    let response = request
+        .json(payload)
+        .send()
+        .map_err(|error| ApiError::Transport(format!("failed to call API: {}", error)))?;
+    parse_api_response(response)
+}
+
+fn require_server_url(session: &DesktopAuthSession) -> Result<String, String> {
+    let value = session
+        .server_url
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if value.is_empty() {
+        return Err(String::from("server_url is required"));
+    }
+    Ok(value)
+}
+
+fn require_access_token(session: &DesktopAuthSession) -> Result<String, String> {
+    let value = session
+        .access_token
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if value.is_empty() {
+        return Err(String::from("desktop auth session is not authenticated"));
+    }
+    Ok(value)
+}
+
+fn refresh_auth_session(
+    session: &mut DesktopAuthSession,
+    auth_session_path: &Path,
+) -> Result<(), String> {
+    let server_url = require_server_url(session)?;
+    let refresh_token = session
+        .refresh_token
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if refresh_token.is_empty() {
+        return Err(String::from(
+            "desktop auth session refresh_token is missing",
+        ));
+    }
+    let payload = post_json(
+        &server_url,
+        "api/auth/refresh",
+        None,
+        &json!({ "refresh_token": refresh_token }),
+    )
+    .map_err(|error| error.message())?;
+    let refreshed: AuthResponse = serde_json::from_value(payload)
+        .map_err(|error| format!("failed to decode auth refresh response: {}", error))?;
+    session.access_token = Some(refreshed.access_token);
+    session.refresh_token = Some(refreshed.refresh_token);
+    session.user = Some(refreshed.user);
+    write_auth_session(auth_session_path, session)?;
+    Ok(())
+}
+
+fn post_authenticated_json(
+    session: &mut DesktopAuthSession,
+    auth_session_path: &Path,
+    path: &str,
+    payload: &Value,
+) -> Result<Value, String> {
+    let server_url = require_server_url(session)?;
+    let access_token = require_access_token(session)?;
+    match post_json(&server_url, path, Some(&access_token), payload) {
+        Ok(value) => Ok(value),
+        Err(ApiError::Http {
+            status: StatusCode::UNAUTHORIZED,
+            ..
+        }) => {
+            refresh_auth_session(session, auth_session_path)?;
+            let next_access_token = require_access_token(session)?;
+            post_json(&server_url, path, Some(&next_access_token), payload)
+                .map_err(|error| error.message())
+        }
+        Err(error) => Err(error.message()),
     }
 }
 
@@ -743,6 +1057,105 @@ fn clear_runtime_token_direct(app: &AppHandle) -> Result<Value, String> {
     }
 }
 
+fn bind_current_runtime(app: &AppHandle, paths: &HostdPaths) -> Result<Value, String> {
+    let mut session = read_auth_session(&paths.auth_session_path)?;
+    let invite_payload = post_authenticated_json(
+        &mut session,
+        &paths.auth_session_path,
+        "api/host/runtime/invites",
+        &json!({ "expires_in_seconds": 900 }),
+    )?;
+    let invite: CreateBindingInviteResponse = serde_json::from_value(invite_payload)
+        .map_err(|error| format!("failed to decode binding invite response: {}", error))?;
+    let invite_url = invite
+        .invite_url
+        .or_else(|| {
+            invite.invite_code.map(|code| {
+                format!(
+                    "{}/api/host/runtime/invites/claim?code={}",
+                    require_server_url(&session)
+                        .unwrap_or_default()
+                        .trim_end_matches('/'),
+                    code
+                )
+            })
+        })
+        .unwrap_or_default();
+    let trimmed_invite_url = invite_url.trim().to_string();
+    if trimmed_invite_url.is_empty() {
+        return Err(String::from(
+            "binding invite response did not include invite_url",
+        ));
+    }
+    let claim_value = run_hostd_json_with_paths(
+        app,
+        &[
+            "pair",
+            "claim-invite",
+            "--invite-url",
+            trimmed_invite_url.as_str(),
+        ],
+        paths,
+    )?;
+    let _ = ensure_helper_running(app);
+    Ok(claim_value)
+}
+
+fn login_and_bind(
+    app: &AppHandle,
+    server_url: &str,
+    username: &str,
+    password: &str,
+) -> Result<Value, String> {
+    let paths = resolve_hostd_paths(app)?;
+    bootstrap_hostd_files(&paths)?;
+    let normalized_server_url = normalize_server_url(server_url)?;
+    let bootstrap: AuthBootstrapStatus = serde_json::from_value(
+        get_json(&normalized_server_url, "api/auth/bootstrap/status")
+            .map_err(|error| error.message())?,
+    )
+    .map_err(|error| format!("failed to decode bootstrap status response: {}", error))?;
+    if !bootstrap.init_done {
+        return Err(String::from("服务端尚未初始化，无法登录桌面客户端"));
+    }
+    let login_payload = post_json(
+        &normalized_server_url,
+        "api/auth/login",
+        None,
+        &json!({
+            "username": username.trim(),
+            "password": password,
+        }),
+    )
+    .map_err(|error| error.message())?;
+    let auth: AuthResponse = serde_json::from_value(login_payload)
+        .map_err(|error| format!("failed to decode auth login response: {}", error))?;
+    let session = DesktopAuthSession {
+        server_url: Some(normalized_server_url),
+        access_token: Some(auth.access_token),
+        refresh_token: Some(auth.refresh_token),
+        user: Some(auth.user),
+    };
+    write_auth_session(&paths.auth_session_path, &session)?;
+    match bind_current_runtime(app, &paths) {
+        Ok(_) => Ok(json!({
+            "authenticated": true,
+            "bind_succeeded": true,
+            "bind_error": Value::Null,
+            "auth": auth_state_json(&session),
+        })),
+        Err(error) => {
+            write_auth_session(&paths.auth_session_path, &session)?;
+            Ok(json!({
+                "authenticated": true,
+                "bind_succeeded": false,
+                "bind_error": error,
+                "auth": auth_state_json(&session),
+            }))
+        }
+    }
+}
+
 #[tauri::command]
 pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
     let paths = resolve_hostd_paths(&app)?;
@@ -750,6 +1163,7 @@ pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
     let resolved_hostd_bin = resolve_hostd_bin(&app);
     let version = run_hostd_json(&app, &["version"])?;
     let status = load_runtime_snapshot(&app, &paths)?;
+    let auth = auth_state_json(&read_auth_session(&paths.auth_session_path)?);
     let app_autostart = serde_json::to_value(autostart::status())
         .map_err(|error| format!("failed to encode desktop autostart status: {}", error))?;
     let config_validation = match run_hostd_json_with_paths(&app, &["config", "validate"], &paths) {
@@ -766,6 +1180,7 @@ pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
         "app_background_launch": autostart::background_launch_requested(),
         "app_autostart": app_autostart,
         "version": version,
+        "auth": auth,
         "status": status,
         "config_validation": config_validation,
         "helper_management": {
@@ -803,6 +1218,61 @@ pub fn desktop_clear_runtime_token(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub fn desktop_login(
+    app: AppHandle,
+    server_url: String,
+    username: String,
+    password: String,
+) -> Result<Value, String> {
+    let normalized_username = username.trim().to_string();
+    if normalized_username.is_empty() {
+        return Err(String::from("username is required"));
+    }
+    if password.trim().is_empty() {
+        return Err(String::from("password is required"));
+    }
+    login_and_bind(&app, &server_url, &normalized_username, password.as_str())
+}
+
+#[tauri::command]
+pub fn desktop_bind_current_runtime(app: AppHandle) -> Result<Value, String> {
+    let paths = resolve_hostd_paths(&app)?;
+    bind_current_runtime(&app, &paths)
+}
+
+#[tauri::command]
+pub fn desktop_logout(app: AppHandle) -> Result<Value, String> {
+    let paths = resolve_hostd_paths(&app)?;
+    let mut session = read_auth_session(&paths.auth_session_path)?;
+    if session
+        .refresh_token
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        let server_url = require_server_url(&session)?;
+        let _ = post_json(
+            &server_url,
+            "api/auth/logout",
+            None,
+            &json!({
+                "refresh_token": session.refresh_token.clone().unwrap_or_default(),
+            }),
+        );
+    }
+    let preserved_server_url = session.server_url.clone();
+    session = DesktopAuthSession {
+        server_url: preserved_server_url,
+        access_token: None,
+        refresh_token: None,
+        user: None,
+    };
+    write_auth_session(&paths.auth_session_path, &session)?;
+    let _ = clear_runtime_token_direct(&app);
+    Ok(auth_state_json(&session))
+}
+
+#[tauri::command]
 pub fn desktop_set_app_autostart(enabled: bool) -> Result<Value, String> {
     let status = autostart::set_enabled(enabled)?;
     serde_json::to_value(status)
@@ -826,4 +1296,27 @@ pub fn desktop_quit_application(app: AppHandle) -> Result<(), String> {
     }
     app.exit(0);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{api_url, normalize_server_url};
+
+    #[test]
+    fn normalize_server_url_accepts_plain_hostname() {
+        let normalized = normalize_server_url("jarvis.example.com").expect("normalize server url");
+        assert_eq!(normalized, "https://jarvis.example.com/");
+    }
+
+    #[test]
+    fn normalize_server_url_preserves_path_prefix() {
+        let normalized = normalize_server_url("https://jarvis.example.com/desktop")
+            .expect("normalize server url");
+        assert_eq!(normalized, "https://jarvis.example.com/desktop/");
+        let login_url = api_url(&normalized, "api/auth/login").expect("api url");
+        assert_eq!(
+            login_url.as_str(),
+            "https://jarvis.example.com/desktop/api/auth/login"
+        );
+    }
 }

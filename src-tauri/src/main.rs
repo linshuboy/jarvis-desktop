@@ -49,6 +49,9 @@ fn main() {
             commands::desktop_validate_config,
             commands::desktop_set_runtime_token,
             commands::desktop_clear_runtime_token,
+            commands::desktop_login,
+            commands::desktop_bind_current_runtime,
+            commands::desktop_logout,
             commands::desktop_set_app_autostart,
             commands::desktop_quit_application
         ])

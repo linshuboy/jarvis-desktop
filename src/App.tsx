@@ -1,10 +1,11 @@
 import { startTransition, useEffect, useMemo, useState } from 'react'
 
 import {
-  clearRuntimeToken,
+  bindCurrentRuntime,
   getDesktopSnapshot,
+  loginDesktop,
+  logoutDesktop,
   quitDesktopApplication,
-  setRuntimeToken,
   setDesktopAutostart,
   validateDesktopConfig,
 } from './bridge'
@@ -51,7 +52,9 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionPending, setActionPending] = useState(false)
-  const [tokenInput, setTokenInput] = useState('')
+  const [serverUrlInput, setServerUrlInput] = useState('')
+  const [usernameInput, setUsernameInput] = useState('')
+  const [passwordInput, setPasswordInput] = useState('')
   const [flash, setFlash] = useState('')
   const [error, setError] = useState('')
 
@@ -86,6 +89,12 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (snapshot?.auth.server_url && serverUrlInput.trim() === '') {
+      setServerUrlInput(snapshot.auth.server_url)
+    }
+  }, [snapshot?.auth.server_url])
+
   const cards = useMemo(() => {
     if (snapshot === null) {
       return []
@@ -106,6 +115,10 @@ export default function App() {
       {
         label: 'Gateway',
         value: snapshot.status.last_gateway_url || '未配置',
+      },
+      {
+        label: 'Server',
+        value: snapshot.auth.server_url || '未登录',
       },
       {
         label: 'Connection',
@@ -133,32 +146,54 @@ export default function App() {
     }
   }
 
-  async function handleSetToken() {
+  async function handleLogin() {
     setActionPending(true)
     setFlash('')
     setError('')
     try {
-      await setRuntimeToken(tokenInput)
-      setTokenInput('')
-      setFlash('runtime token 已写入 helper，本地状态已刷新')
+      const result = await loginDesktop(serverUrlInput, usernameInput, passwordInput)
+      setPasswordInput('')
+      if (result.bind_succeeded) {
+        setFlash('登录成功，当前设备已自动绑定并写入 helper')
+      } else {
+        setFlash('登录成功，但当前设备自动绑定失败，可在下方重试')
+        if (result.bind_error) {
+          setError(result.bind_error)
+        }
+      }
       await refreshSnapshot()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '写入 token 失败')
+      setError(nextError instanceof Error ? nextError.message : '登录失败')
     } finally {
       setActionPending(false)
     }
   }
 
-  async function handleClearToken() {
+  async function handleBindCurrentRuntime() {
     setActionPending(true)
     setFlash('')
     setError('')
     try {
-      await clearRuntimeToken()
-      setFlash('runtime token 已清除')
+      await bindCurrentRuntime()
+      setFlash('当前设备已重新绑定并刷新 helper token')
       await refreshSnapshot()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '清除 token 失败')
+      setError(nextError instanceof Error ? nextError.message : '绑定当前设备失败')
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  async function handleLogout() {
+    setActionPending(true)
+    setFlash('')
+    setError('')
+    try {
+      await logoutDesktop()
+      setFlash('账号已退出，当前设备 token 已清除')
+      await refreshSnapshot()
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '退出账号失败')
     } finally {
       setActionPending(false)
     }
@@ -202,8 +237,8 @@ export default function App() {
             <p className="eyebrow">Batch E / macOS App + Helper</p>
             <h1>JARVIS Desktop</h1>
             <p className="hero-copy">
-              这版桌面壳负责用户交互和 helper 生命周期；helper 仍保持单条 WS 长连接与 `host.main`
-              真实执行面，真正退出 App 时会一起停止。
+              这版桌面壳负责服务地址配置、账号登录和当前设备自动绑定；helper 仍保持单条 WS 长连接与
+              `host.main` 真实执行面，真正退出 App 时会一起停止。
             </p>
           </div>
           <div className="hero-meta">
@@ -356,26 +391,80 @@ export default function App() {
 
           <article className="glass-card">
             <div className="card-header">
-              <h2>Token Handoff</h2>
-              <span className="micro-note">App 收到 approve 后，通过 Tauri 后端直连 helper 的 control socket，下发 token 并立即触发 reconnect。</span>
+              <h2>Server & Account</h2>
+              <span className="micro-note">GUI 版内部复用 invite create + claim 语义，但不暴露手工链接；用户只需要配置服务地址并登录。</span>
             </div>
             <label className="field">
-              <span>Runtime Token</span>
-              <textarea
-                value={tokenInput}
-                onChange={(event) => setTokenInput(event.target.value)}
-                placeholder="在这里粘贴 approve 返回的 runtime_token"
-                rows={5}
+              <span>Server URL</span>
+              <input
+                onChange={(event) => setServerUrlInput(event.target.value)}
+                placeholder="https://jarvis.example.com"
+                type="url"
+                value={serverUrlInput}
               />
             </label>
-            <div className="button-row">
-              <button disabled={actionPending || tokenInput.trim() === ''} onClick={() => void handleSetToken()} type="button">
-                写入 Token
-              </button>
-              <button className="button-muted" disabled={actionPending} onClick={() => void handleClearToken()} type="button">
-                清除 Token
-              </button>
-            </div>
+            {snapshot?.auth.authenticated ? (
+              <>
+                <dl className="detail-list">
+                  <div>
+                    <dt>当前账号</dt>
+                    <dd>{snapshot.auth.user?.display_name || snapshot.auth.user?.username || '未知用户'}</dd>
+                  </div>
+                  <div>
+                    <dt>User ID</dt>
+                    <dd>{snapshot.auth.user?.user_id || '未记录'}</dd>
+                  </div>
+                  <div>
+                    <dt>Role</dt>
+                    <dd>{snapshot.auth.user?.role || 'unknown'}</dd>
+                  </div>
+                  <div>
+                    <dt>设备绑定</dt>
+                    <dd>{snapshot.status.pairing_state === 'paired' ? '已绑定并在线' : `当前状态：${snapshot.status.pairing_state}`}</dd>
+                  </div>
+                </dl>
+                <div className="button-row">
+                  <button disabled={actionPending} onClick={() => void handleBindCurrentRuntime()} type="button">
+                    重新绑定当前设备
+                  </button>
+                  <button className="button-muted" disabled={actionPending} onClick={() => void handleLogout()} type="button">
+                    退出账号
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="field">
+                  <span>Username</span>
+                  <input
+                    autoComplete="username"
+                    onChange={(event) => setUsernameInput(event.target.value)}
+                    placeholder="输入账号名"
+                    type="text"
+                    value={usernameInput}
+                  />
+                </label>
+                <label className="field">
+                  <span>Password</span>
+                  <input
+                    autoComplete="current-password"
+                    onChange={(event) => setPasswordInput(event.target.value)}
+                    placeholder="输入密码"
+                    type="password"
+                    value={passwordInput}
+                  />
+                </label>
+                <div className="button-row">
+                  <button
+                    disabled={actionPending || serverUrlInput.trim() === '' || usernameInput.trim() === '' || passwordInput.trim() === ''}
+                    onClick={() => void handleLogin()}
+                    type="button"
+                  >
+                    登录并绑定当前设备
+                  </button>
+                </div>
+              </>
+            )}
             {flash ? <p className="flash flash-success">{flash}</p> : null}
             {error ? <p className="flash flash-error">{error}</p> : null}
           </article>
@@ -459,11 +548,11 @@ export default function App() {
         <section className="footer-notes">
           <article className="glass-card note-card">
             <h3>Batch E 边界</h3>
-            <p>App 负责登录、配对结果展示、状态展示与 helper 生命周期；helper 继续负责 WS 主循环、心跳、重连与 `host.main` 执行。</p>
+            <p>App 负责服务地址配置、账号登录、当前设备自动绑定、状态展示与 helper 生命周期；helper 继续负责 WS 主循环、心跳、重连与 `host.main` 执行。</p>
           </article>
           <article className="glass-card note-card">
             <h3>当前 bridge</h3>
-            <p>实时状态和 token 下发走 Tauri Rust 直连 `hostd` control socket；helper 启动由 App 自己管理，配置校验仍调用随 App 分发的 `hostd` 本地命令。</p>
+            <p>GUI 登录后由 Tauri 先创建一次性 invite，再直接调用随 App 分发的 `hostd pair claim-invite` 完成当前设备绑定；helper 启动由 App 自己管理。</p>
           </article>
         </section>
       </main>
