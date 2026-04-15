@@ -255,6 +255,18 @@ jobs:
 
   desktop-macos:
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_suffix: aarch64
+            goarch: arm64
+            resource_arch: aarch64
+            tauri_target: aarch64-apple-darwin
+          - artifact_suffix: x86_64
+            goarch: amd64
+            resource_arch: x86_64
+            tauri_target: x86_64-apple-darwin
     defaults:
       run:
         working-directory: apps/desktop
@@ -314,6 +326,8 @@ jobs:
           go-version-file: runtime/hostd/go.mod
           cache: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: Add Rust macOS target
+        run: rustup target add "${{ matrix.tauri_target }}"
       - name: Install desktop dependencies
         run: npm ci
       - name: Verify release version
@@ -328,18 +342,18 @@ jobs:
         run: |
           npm run build
           npm run build:icons
-          npm run build:hostd
-          npx tauri build --bundles app,dmg
+          GOOS=darwin GOARCH=${{ matrix.goarch }} RESOURCE_OS=macos RESOURCE_ARCH=${{ matrix.resource_arch }} npm run build:hostd
+          npx tauri build --target "${{ matrix.tauri_target }}" --bundles app,dmg
       - name: Stage macOS desktop assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          find src-tauri/target/release/bundle/dmg -name '*.dmg' -exec cp {} release-assets/ \;
+          find "src-tauri/target/${{ matrix.tauri_target }}/release/bundle/dmg" -name '*.dmg' -exec cp {} release-assets/ \;
           test "$(find release-assets -type f | wc -l)" -gt 0
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-macos-bundles
+          name: desktop-macos-${{ matrix.artifact_suffix }}-bundles
           path: apps/desktop/release-assets/*
           if-no-files-found: error
       - uses: softprops/action-gh-release@v2
