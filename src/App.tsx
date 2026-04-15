@@ -54,6 +54,7 @@ export default function App() {
   const [authState, setAuthState] = useState<DesktopAuthState | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionPending, setActionPending] = useState(false)
+  const [autoBindAttemptedFor, setAutoBindAttemptedFor] = useState('')
   const [serverUrlInput, setServerUrlInput] = useState('')
   const [usernameInput, setUsernameInput] = useState('')
   const [passwordInput, setPasswordInput] = useState('')
@@ -61,7 +62,6 @@ export default function App() {
   const [error, setError] = useState('')
 
   async function refreshSnapshot() {
-    setError('')
     const next = await getDesktopSnapshot()
     startTransition(() => {
       setSnapshot(next)
@@ -111,12 +111,67 @@ export default function App() {
   }, [])
 
   const effectiveAuth = authState ?? snapshot?.auth ?? null
+  const autoBindKey =
+    effectiveAuth?.authenticated && effectiveAuth.server_url
+      ? `${effectiveAuth.server_url}:${effectiveAuth.user?.user_id ?? 'session'}`
+      : ''
 
   useEffect(() => {
     if (effectiveAuth?.server_url && serverUrlInput.trim() === '') {
       setServerUrlInput(effectiveAuth.server_url)
     }
   }, [effectiveAuth?.server_url, serverUrlInput])
+
+  useEffect(() => {
+    if (!effectiveAuth?.authenticated) {
+      setAutoBindAttemptedFor('')
+    }
+  }, [effectiveAuth?.authenticated])
+
+  useEffect(() => {
+    if (
+      snapshot === null ||
+      !effectiveAuth?.authenticated ||
+      loading ||
+      actionPending ||
+      autoBindKey === '' ||
+      autoBindAttemptedFor === autoBindKey ||
+      snapshot.status.has_runtime_token ||
+      snapshot.status.pairing_state === 'paired'
+    ) {
+      return
+    }
+    let disposed = false
+    setAutoBindAttemptedFor(autoBindKey)
+    setActionPending(true)
+    setFlash('')
+    setError('')
+    bindCurrentRuntime()
+      .then(async () => {
+        if (disposed) {
+          return
+        }
+        setFlash('已自动恢复当前设备绑定并写入 helper')
+        await refreshSnapshot().catch(() => {
+          return
+        })
+      })
+      .catch((nextError) => {
+        if (disposed) {
+          return
+        }
+        setError(nextError instanceof Error ? nextError.message : '自动绑定当前设备失败')
+      })
+      .finally(() => {
+        if (disposed) {
+          return
+        }
+        setActionPending(false)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [actionPending, autoBindAttemptedFor, autoBindKey, effectiveAuth?.authenticated, loading, snapshot])
 
   const cards = useMemo(() => {
     if (snapshot === null) {
