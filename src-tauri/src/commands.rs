@@ -95,13 +95,35 @@ fn hostd_binary_name() -> &'static str {
     }
 }
 
-fn bundled_hostd_relative_path() -> PathBuf {
-    PathBuf::from("hostd")
-        .join(format!("{}-{}", env::consts::OS, env::consts::ARCH))
-        .join(hostd_binary_name())
+fn hostd_sidecar_source_name() -> &'static str {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return "hostd-aarch64-apple-darwin";
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        return "hostd-x86_64-apple-darwin";
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        return "hostd-aarch64-unknown-linux-gnu";
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        return "hostd-x86_64-unknown-linux-gnu";
+    }
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    {
+        return "hostd-aarch64-pc-windows-msvc.exe";
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        return "hostd-x86_64-pc-windows-msvc.exe";
+    }
+    hostd_binary_name()
 }
 
-fn resolve_hostd_bin(app: &AppHandle) -> PathBuf {
+fn resolve_hostd_bin(_app: &AppHandle) -> PathBuf {
     if let Ok(path) = env::var("AGI_HOSTD_BIN") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -109,20 +131,20 @@ fn resolve_hostd_bin(app: &AppHandle) -> PathBuf {
         }
     }
 
-    let bundled_relative_path = bundled_hostd_relative_path();
-
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let bundled_path = resource_dir.join(&bundled_relative_path);
-        if bundled_path.is_file() {
-            return bundled_path;
+    if let Ok(current_exe) = env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            let bundled_path = parent.join(hostd_binary_name());
+            if bundled_path.is_file() {
+                return bundled_path;
+            }
         }
     }
 
-    let source_resources_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join(&bundled_relative_path);
-    if source_resources_path.is_file() {
-        return source_resources_path;
+    let source_sidecar_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(hostd_sidecar_source_name());
+    if source_sidecar_path.is_file() {
+        return source_sidecar_path;
     }
 
     let workspace_hostd_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

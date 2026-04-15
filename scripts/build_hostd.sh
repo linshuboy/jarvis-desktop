@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 HOSTD_DIR="$ROOT_DIR/runtime/hostd"
-OUTPUT_ROOT="$ROOT_DIR/apps/desktop/src-tauri/resources/hostd"
+OUTPUT_ROOT="$ROOT_DIR/apps/desktop/src-tauri/binaries"
 
 GO_BIN="${GO_BIN:-go}"
 
@@ -34,28 +34,19 @@ detect_goarch() {
   esac
 }
 
-detect_resource_arch() {
-  local goarch_value
-  goarch_value="${1:-}"
-  case "$goarch_value" in
-    amd64|x86_64) printf '%s\n' 'x86_64' ;;
-    arm64|aarch64) printf '%s\n' 'aarch64' ;;
-    *)
-      printf 'unsupported architecture for desktop resource path: %s\n' "$goarch_value" >&2
-      return 1
-      ;;
-  esac
-}
-
-detect_resource_os() {
-  local goos_value
+detect_target_triple() {
+  local goos_value goarch_value
   goos_value="${1:-}"
-  case "$goos_value" in
-    darwin) printf '%s\n' 'macos' ;;
-    linux) printf '%s\n' 'linux' ;;
-    windows) printf '%s\n' 'windows' ;;
+  goarch_value="${2:-}"
+  case "${goos_value}/${goarch_value}" in
+    darwin/amd64) printf '%s\n' 'x86_64-apple-darwin' ;;
+    darwin/arm64) printf '%s\n' 'aarch64-apple-darwin' ;;
+    linux/amd64) printf '%s\n' 'x86_64-unknown-linux-gnu' ;;
+    linux/arm64) printf '%s\n' 'aarch64-unknown-linux-gnu' ;;
+    windows/amd64) printf '%s\n' 'x86_64-pc-windows-msvc' ;;
+    windows/arm64) printf '%s\n' 'aarch64-pc-windows-msvc' ;;
     *)
-      printf 'unsupported operating system for desktop resource path: %s\n' "$goos_value" >&2
+      printf 'unsupported GOOS/GOARCH for desktop sidecar target: %s/%s\n' "$goos_value" "$goarch_value" >&2
       return 1
       ;;
   esac
@@ -63,18 +54,19 @@ detect_resource_os() {
 
 GOOS_VALUE="${GOOS:-$(detect_goos)}"
 GOARCH_VALUE="${GOARCH:-$(detect_goarch)}"
-RESOURCE_OS="${RESOURCE_OS:-$(detect_resource_os "$GOOS_VALUE")}"
-RESOURCE_ARCH="${RESOURCE_ARCH:-$(detect_resource_arch "$GOARCH_VALUE")}"
+TARGET_TRIPLE_VALUE="${TARGET_TRIPLE:-$(detect_target_triple "$GOOS_VALUE" "$GOARCH_VALUE")}"
 
 case "$GOOS_VALUE" in
   windows) BINARY_NAME="hostd.exe" ;;
   *) BINARY_NAME="hostd" ;;
 esac
 
-OUTPUT_DIR="$OUTPUT_ROOT/$RESOURCE_OS-$RESOURCE_ARCH"
-OUTPUT_PATH="$OUTPUT_DIR/$BINARY_NAME"
+OUTPUT_PATH="$OUTPUT_ROOT/hostd-$TARGET_TRIPLE_VALUE"
+if [[ "$GOOS_VALUE" == "windows" ]]; then
+  OUTPUT_PATH="${OUTPUT_PATH}.exe"
+fi
 
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_ROOT"
 
 printf 'building hostd -> %s\n' "$OUTPUT_PATH"
 (

@@ -342,7 +342,7 @@ jobs:
         run: |
           npm run build
           npm run build:icons
-          GOOS=darwin GOARCH=${{ matrix.goarch }} RESOURCE_OS=macos RESOURCE_ARCH=${{ matrix.resource_arch }} npm run build:hostd
+          GOOS=darwin GOARCH=${{ matrix.goarch }} TARGET_TRIPLE=${{ matrix.tauri_target }} npm run build:hostd
           npx tauri build --target "${{ matrix.tauri_target }}" --bundles app,dmg
       - name: Stage macOS desktop assets
         shell: bash

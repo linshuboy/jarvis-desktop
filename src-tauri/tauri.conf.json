@@ -30,8 +30,8 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/hostd/**/*"
+    "externalBin": [
+      "binaries/hostd"
     ],
     "macOS": {
       "minimumSystemVersion": "13.0"

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+release-assets/
+src-tauri/binaries/
+src-tauri/resources/hostd/
+src-tauri/target/
