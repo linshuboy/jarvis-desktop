@@ -252,6 +252,9 @@ export default function App() {
   }
 
   const configValidation: ConfigValidation | null = snapshot?.config_validation ?? null
+  const currentPairingState = snapshot?.status.pairing_state ?? 'unknown'
+  const currentPairingLabel =
+    currentPairingState === 'paired' ? '已绑定并在线' : snapshot ? `当前状态：${currentPairingState}` : '状态刷新中'
 
   return (
     <div className="app-shell">
@@ -363,7 +366,7 @@ export default function App() {
           <article className="glass-card">
             <div className="card-header">
               <h2>App Session</h2>
-              <span className="micro-note">关闭窗口不会退出应用；如需真正结束会话，请使用这里的退出按钮。</span>
+              <span className="micro-note">关闭窗口不会退出应用；可通过状态栏或托盘图标重新打开，如需真正结束会话，请使用退出按钮。</span>
             </div>
             {snapshot ? (
               <>
@@ -449,7 +452,7 @@ export default function App() {
                   </div>
                   <div>
                     <dt>设备绑定</dt>
-                    <dd>{snapshot.status.pairing_state === 'paired' ? '已绑定并在线' : `当前状态：${snapshot.status.pairing_state}`}</dd>
+                    <dd>{currentPairingLabel}</dd>
                   </div>
                 </dl>
                 <div className="button-row">

@@ -1,4 +1,5 @@
 use crate::autostart;
+use crate::sync_tray_autostart_state;
 
 use std::env;
 use std::fs;
@@ -1395,8 +1396,9 @@ pub fn desktop_logout(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn desktop_set_app_autostart(enabled: bool) -> Result<Value, String> {
+pub fn desktop_set_app_autostart(app: AppHandle, enabled: bool) -> Result<Value, String> {
     let status = autostart::set_enabled(enabled)?;
+    sync_tray_autostart_state(&app, status.enabled);
     serde_json::to_value(status)
         .map_err(|error| format!("failed to encode desktop autostart update: {}", error))
 }
