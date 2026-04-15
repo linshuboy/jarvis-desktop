@@ -21,10 +21,6 @@ on:
         description: 'Main repository that owns the release'
         required: false
         type: string
-      hostd_repository:
-        description: 'Hostd repository to bundle with the desktop app'
-        required: false
-        type: string
       source_repository:
         description: 'Main repository that requested this build'
         required: false
@@ -36,6 +32,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  HOSTD_REPOSITORY: linshuboy/jarvis-hostd
 
 jobs:
   desktop-linux:
@@ -51,7 +50,6 @@ jobs:
         shell: bash
         env:
           MAIN_REPOSITORY: ${{ inputs.main_repository || vars.MAIN_RELEASE_REPOSITORY }}
-          HOSTD_REPOSITORY: ${{ inputs.hostd_repository || vars.HOSTD_REPOSITORY }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
           REQUESTED_PUBLISH_RELEASE: ${{ inputs.publish_release }}
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
@@ -69,16 +67,11 @@ jobs:
               exit 1
             fi
           fi
-          if [[ -z "${HOSTD_REPOSITORY:-}" ]]; then
-            echo "Missing hostd_repository input or HOSTD_REPOSITORY variable." >&2
-            exit 1
-          fi
           if [[ -z "${CROSS_REPO_TOKEN:-}" ]]; then
             echo "Missing CROSS_REPO_TOKEN secret for hostd checkout." >&2
             exit 1
           fi
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
-          echo "hostd_repository=${HOSTD_REPOSITORY}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -86,7 +79,7 @@ jobs:
           path: apps/desktop
       - uses: actions/checkout@v4
         with:
-          repository: ${{ steps.settings.outputs.hostd_repository }}
+          repository: ${{ env.HOSTD_REPOSITORY }}
           path: runtime/hostd
           token: ${{ secrets.CROSS_REPO_TOKEN }}
       - uses: actions/setup-node@v4
@@ -167,7 +160,6 @@ jobs:
         shell: bash
         env:
           MAIN_REPOSITORY: ${{ inputs.main_repository || vars.MAIN_RELEASE_REPOSITORY }}
-          HOSTD_REPOSITORY: ${{ inputs.hostd_repository || vars.HOSTD_REPOSITORY }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
           REQUESTED_PUBLISH_RELEASE: ${{ inputs.publish_release }}
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
@@ -185,16 +177,11 @@ jobs:
               exit 1
             fi
           fi
-          if [[ -z "${HOSTD_REPOSITORY:-}" ]]; then
-            echo "Missing hostd_repository input or HOSTD_REPOSITORY variable." >&2
-            exit 1
-          fi
           if [[ -z "${CROSS_REPO_TOKEN:-}" ]]; then
             echo "Missing CROSS_REPO_TOKEN secret for hostd checkout." >&2
             exit 1
           fi
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
-          echo "hostd_repository=${HOSTD_REPOSITORY}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -202,7 +189,7 @@ jobs:
           path: apps/desktop
       - uses: actions/checkout@v4
         with:
-          repository: ${{ steps.settings.outputs.hostd_repository }}
+          repository: ${{ env.HOSTD_REPOSITORY }}
           path: runtime/hostd
           token: ${{ secrets.CROSS_REPO_TOKEN }}
       - uses: actions/setup-node@v4
@@ -278,7 +265,6 @@ jobs:
         shell: bash
         env:
           MAIN_REPOSITORY: ${{ inputs.main_repository || vars.MAIN_RELEASE_REPOSITORY }}
-          HOSTD_REPOSITORY: ${{ inputs.hostd_repository || vars.HOSTD_REPOSITORY }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
           REQUESTED_PUBLISH_RELEASE: ${{ inputs.publish_release }}
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
@@ -296,16 +282,11 @@ jobs:
               exit 1
             fi
           fi
-          if [[ -z "${HOSTD_REPOSITORY:-}" ]]; then
-            echo "Missing hostd_repository input or HOSTD_REPOSITORY variable." >&2
-            exit 1
-          fi
           if [[ -z "${CROSS_REPO_TOKEN:-}" ]]; then
             echo "Missing CROSS_REPO_TOKEN secret for hostd checkout." >&2
             exit 1
           fi
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
-          echo "hostd_repository=${HOSTD_REPOSITORY}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -313,7 +294,7 @@ jobs:
           path: apps/desktop
       - uses: actions/checkout@v4
         with:
-          repository: ${{ steps.settings.outputs.hostd_repository }}
+          repository: ${{ env.HOSTD_REPOSITORY }}
           path: runtime/hostd
           token: ${{ secrets.CROSS_REPO_TOKEN }}
       - uses: actions/setup-node@v4
