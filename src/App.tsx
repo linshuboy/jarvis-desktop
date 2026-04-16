@@ -183,7 +183,7 @@ export default function App() {
         value: snapshot.status.bridge_mode || snapshot.bridge,
       },
       {
-        label: 'Runtime ID',
+        label: 'Machine ID',
         value: snapshot.status.runtime_id || '尚未生成',
       },
       {
@@ -369,7 +369,7 @@ export default function App() {
                     <dd>{snapshot.status.pairing_state}</dd>
                   </div>
                   <div>
-                    <dt>Has Token</dt>
+                    <dt>Machine Token</dt>
                     <dd>{snapshot.status.has_runtime_token ? 'yes' : 'no'}</dd>
                   </div>
                   <div>
@@ -607,7 +607,7 @@ export default function App() {
           <article className="glass-card wide-card">
             <div className="card-header">
               <h2>Config Preview</h2>
-              <span className="micro-note">来自 `hostd config validate`，App 不持有比 helper 更权威的 runtime 状态。</span>
+              <span className="micro-note">来自 `hostd config validate`，App 不持有比 helper 更权威的 machine 状态。</span>
             </div>
             {configValidation?.valid ? (
               <div className="config-grid">
