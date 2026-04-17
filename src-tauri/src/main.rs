@@ -181,8 +181,13 @@ fn main() {
             }
             let helper_app_handle = app_handle.clone();
             std::thread::spawn(move || {
-                if let Err(error) = commands::ensure_helper_running(&helper_app_handle) {
-                    eprintln!("failed to ensure desktop helper is running: {}", error);
+                if let Err(error) =
+                    commands::recover_helper_after_desktop_launch(&helper_app_handle)
+                {
+                    eprintln!(
+                        "failed to recover desktop helper after app launch: {}",
+                        error
+                    );
                 }
             });
             let close_app_handle = app_handle.clone();

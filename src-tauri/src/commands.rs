@@ -1002,27 +1002,87 @@ fn parse_http_response(bytes: &[u8]) -> Result<Value, String> {
     Ok(payload)
 }
 
-fn helper_available(_app: &AppHandle, paths: &HostdPaths) -> bool {
+fn decode_socket_snapshot(value: Value, context: &str) -> Result<SocketSnapshot, String> {
+    let candidate = if value.get("status").is_some() {
+        value.get("status").cloned().unwrap_or(value)
+    } else {
+        value
+    };
+    serde_json::from_value(candidate)
+        .map_err(|error| format!("failed to decode hostd {} response: {}", context, error))
+}
+
+fn helper_snapshot(app: &AppHandle, paths: &HostdPaths) -> Result<SocketSnapshot, String> {
     #[cfg(unix)]
     {
-        return appctl_request("/v1/snapshot", "GET", None, &paths.control_socket_path).is_ok();
+        let value = appctl_request("/v1/snapshot", "GET", None, &paths.control_socket_path)?;
+        return decode_socket_snapshot(value, "snapshot");
     }
     #[cfg(not(unix))]
     {
-        return run_hostd_json_with_paths(_app, &["app", "snapshot"], paths)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("helper_available")
-                    .and_then(Value::as_bool)
-                    .or_else(|| {
-                        value.get("status").and_then(|status| {
-                            status.get("helper_available").and_then(Value::as_bool)
-                        })
-                    })
-            })
-            .unwrap_or(false);
+        let value = run_hostd_json_with_paths(app, &["app", "snapshot"], paths)?;
+        return decode_socket_snapshot(value, "snapshot");
     }
+}
+
+fn request_helper_reconnect(app: &AppHandle, paths: &HostdPaths) -> Result<SocketSnapshot, String> {
+    #[cfg(unix)]
+    {
+        let value = appctl_request(
+            "/v1/reconnect",
+            "POST",
+            Some(&json!({})),
+            &paths.control_socket_path,
+        )?;
+        return decode_socket_snapshot(value, "reconnect");
+    }
+    #[cfg(not(unix))]
+    {
+        let value = run_hostd_json_with_paths(app, &["app", "reconnect"], paths)?;
+        return decode_socket_snapshot(value, "reconnect");
+    }
+}
+
+fn request_helper_shutdown(app: &AppHandle, paths: &HostdPaths) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let _ = appctl_request(
+            "/v1/shutdown",
+            "POST",
+            Some(&json!({})),
+            &paths.control_socket_path,
+        )?;
+        return Ok(());
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = run_hostd_json_with_paths(app, &["app", "shutdown"], paths)?;
+        return Ok(());
+    }
+}
+
+fn should_request_helper_reconnect(snapshot: &SocketSnapshot) -> bool {
+    if snapshot.online || !snapshot.has_runtime_token {
+        return false;
+    }
+    let pairing_state = normalize_pairing_state(snapshot.pairing_state.as_deref());
+    if pairing_state != "paired" {
+        return false;
+    }
+    let connection_state = snapshot
+        .connection_state
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    !matches!(
+        connection_state.as_str(),
+        "connected" | "connecting" | "waiting_for_pairing" | "stopping"
+    )
+}
+
+fn helper_available(_app: &AppHandle, paths: &HostdPaths) -> bool {
+    helper_snapshot(_app, paths).is_ok()
 }
 
 fn spawn_hostd(app: &AppHandle, paths: &HostdPaths) -> Result<(), String> {
@@ -1061,6 +1121,33 @@ pub fn ensure_helper_running(app: &AppHandle) -> Result<(), String> {
     }
     Err(format!(
         "helper did not become ready on {} after desktop startup",
+        paths.control_socket_path.display()
+    ))
+}
+
+pub fn recover_helper_after_desktop_launch(app: &AppHandle) -> Result<(), String> {
+    ensure_helper_running(app)?;
+    let paths = resolve_hostd_paths(app)?;
+    let snapshot = helper_snapshot(app, &paths)?;
+    if should_request_helper_reconnect(&snapshot) {
+        let _ = request_helper_reconnect(app, &paths)?;
+    }
+    Ok(())
+}
+
+fn shutdown_helper_before_exit(app: &AppHandle, paths: &HostdPaths) -> Result<(), String> {
+    if !helper_available(app, paths) {
+        return Ok(());
+    }
+    request_helper_shutdown(app, paths)?;
+    for _ in 0..40 {
+        if !helper_available(app, paths) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!(
+        "helper is still running after shutdown request on {}",
         paths.control_socket_path.display()
     ))
 }
@@ -1429,15 +1516,13 @@ pub fn desktop_set_app_autostart(app: AppHandle, enabled: bool) -> Result<Value,
 pub fn desktop_quit_application(app: AppHandle) -> Result<(), String> {
     match resolve_hostd_paths(&app) {
         Ok(paths) => {
-            if let Err(error) = run_hostd_json_with_paths(&app, &["app", "shutdown"], &paths) {
-                eprintln!("failed to stop helper before desktop exit: {}", error);
-            }
+            shutdown_helper_before_exit(&app, &paths)?;
         }
         Err(error) => {
-            eprintln!(
+            return Err(format!(
                 "failed to resolve desktop helper paths before exit: {}",
                 error
-            );
+            ));
         }
     }
     app.exit(0);
@@ -1446,7 +1531,7 @@ pub fn desktop_quit_application(app: AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{api_url, normalize_server_url};
+    use super::{api_url, normalize_server_url, should_request_helper_reconnect, SocketSnapshot};
 
     #[test]
     fn normalize_server_url_accepts_plain_hostname() {
@@ -1464,5 +1549,38 @@ mod tests {
             login_url.as_str(),
             "https://jarvis.example.com/desktop/api/auth/login"
         );
+    }
+
+    #[test]
+    fn helper_reconnect_is_requested_for_paired_offline_snapshot_with_token() {
+        let snapshot = SocketSnapshot {
+            pairing_state: Some(String::from("paired")),
+            has_runtime_token: true,
+            online: false,
+            connection_state: Some(String::from("backoff")),
+            ..SocketSnapshot::default()
+        };
+        assert!(should_request_helper_reconnect(&snapshot));
+    }
+
+    #[test]
+    fn helper_reconnect_is_not_requested_while_connecting_or_unpaired() {
+        let connecting = SocketSnapshot {
+            pairing_state: Some(String::from("paired")),
+            has_runtime_token: true,
+            online: false,
+            connection_state: Some(String::from("connecting")),
+            ..SocketSnapshot::default()
+        };
+        assert!(!should_request_helper_reconnect(&connecting));
+
+        let unpaired = SocketSnapshot {
+            pairing_state: Some(String::from("unpaired")),
+            has_runtime_token: false,
+            online: false,
+            connection_state: Some(String::from("offline")),
+            ..SocketSnapshot::default()
+        };
+        assert!(!should_request_helper_reconnect(&unpaired));
     }
 }
