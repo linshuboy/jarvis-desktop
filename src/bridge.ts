@@ -260,7 +260,7 @@ export async function validateDesktopConfig(): Promise<ConfigValidation> {
 export async function setRuntimeToken(token: string): Promise<PairStatus> {
   const trimmed = token.trim()
   if (!trimmed) {
-    throw new Error('machine token 不能为空')
+    throw new Error('设备 token 不能为空')
   }
   const invoke = await resolveInvoke()
   if (invoke === null) {
