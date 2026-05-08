@@ -93,7 +93,7 @@ async function resolveInvoke(): Promise<TauriInvoke | null> {
 function buildMockSnapshot(): DesktopSnapshot {
   return {
     bridge: mockStatus.bridge_mode,
-    hostd_bin_path: '~/Library/Application Support/JARVIS Desktop/hostd/macos-current-arch/hostd',
+    hostd_bin_path: '~/Library/Application Support/JARVIS Desktop/hostd/macos-aarch64/hostd',
     app_close_action: 'hide',
     app_background_launch: false,
     app_autostart: { ...mockAutostartStatus },

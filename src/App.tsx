@@ -1,4 +1,16 @@
 import { startTransition, useEffect, useMemo, useState } from 'react'
+import {
+  DigitalHumanPanel,
+  ProcessTimeline,
+  RoleMarker,
+  StatusPill,
+  WorkbenchShell,
+  createInitialDigitalHumanVisualState,
+  createDigitalHumanStatusSummary,
+  runDigitalHumanKernelTask,
+  type AvatarVisualState,
+  type RunKernelTaskArguments,
+} from '@agi/frontend'
 
 import {
   bindCurrentRuntime,
@@ -10,6 +22,7 @@ import {
   syncDesktopAuthState,
   validateDesktopConfig,
 } from './bridge'
+import { createDesktopRuntimeProcessView } from './desktopStatusAdapter'
 import type { ConfigValidation, DesktopAuthState, DesktopSnapshot } from './types'
 
 function formatTimestamp(value: string): string {
@@ -60,6 +73,11 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('')
   const [flash, setFlash] = useState('')
   const [error, setError] = useState('')
+  const [digitalHumanMode, setDigitalHumanMode] = useState(false)
+  const [digitalHumanSessionActive, setDigitalHumanSessionActive] = useState(false)
+  const [digitalHumanVisualState, setDigitalHumanVisualState] = useState<AvatarVisualState>(() =>
+    createInitialDigitalHumanVisualState(),
+  )
 
   async function refreshSnapshot() {
     const next = await getDesktopSnapshot()
@@ -306,37 +324,109 @@ export default function App() {
     }
   }
 
+  function startDigitalHumanVoiceSession() {
+    setDigitalHumanMode(true)
+    setDigitalHumanSessionActive(true)
+    setDigitalHumanVisualState({
+      state: 'listening',
+      source: 'realtime',
+      message: '桌面数字人已就绪，可配合 Web 对话活动使用',
+      at: new Date().toISOString(),
+    })
+  }
+
+  function interruptDigitalHumanVoiceSession() {
+    setDigitalHumanSessionActive(false)
+    setDigitalHumanVisualState({
+      state: 'interrupted',
+      source: 'realtime',
+      message: '已打断数字人播报',
+      at: new Date().toISOString(),
+    })
+  }
+
+  async function runDigitalHumanKernelTaskFromDesktop(args: RunKernelTaskArguments) {
+    return await runDigitalHumanKernelTask(
+      args,
+      { sessionId: 'desktop-digital-human' },
+      {
+        async sendActivityThreadMessage() {
+          return {
+            error: {
+              code: 'ACTIVITY_THREAD_REQUIRED',
+              message: '桌面端需要先连接到一个活动线程',
+            },
+            requiresUserAction: true,
+          }
+        },
+      },
+    )
+  }
+
   const configValidation: ConfigValidation | null = snapshot?.config_validation ?? null
   const currentPairingState = snapshot?.status.pairing_state ?? 'unknown'
   const currentPairingLabel =
     currentPairingState === 'paired' ? '已绑定并在线' : snapshot ? `当前状态：${currentPairingState}` : '状态刷新中'
+  const runtimeProcessView = useMemo(
+    () => createDesktopRuntimeProcessView({ snapshot, effectiveAuth, configValidation }),
+    [configValidation, effectiveAuth, snapshot],
+  )
+
+  const workbenchRail = (
+    <div className="desktop-rail">
+      <div className="rail-cluster">
+        <span className="rail-label">Runtime</span>
+        <strong>{snapshot?.status.runtime_id || '尚未生成'}</strong>
+      </div>
+      <div className="rail-cluster">
+        <span className="rail-label">Gateway</span>
+        <strong>{snapshot?.status.last_gateway_url || effectiveAuth?.server_url || '未配置'}</strong>
+      </div>
+      <div className="rail-cluster">
+        <span className="rail-label">Bridge</span>
+        <strong>{snapshot?.status.bridge_mode || snapshot?.bridge || 'loading'}</strong>
+      </div>
+    </div>
+  )
 
   return (
     <div className="app-shell">
       <div className="background-grid" />
-      <main className="app-frame">
+      <main className="app-frame desktop-redesign">
         <section className="hero">
           <div>
-            <p className="eyebrow">Batch E / macOS App + Helper</p>
+            <p className="eyebrow">Desktop Runtime Console</p>
             <h1>JARVIS Desktop</h1>
             <p className="hero-copy">
-              这版桌面壳负责服务地址配置、账号登录和当前设备自动绑定；helper 仍保持单条 WS 长连接与
-              `host.main` 真实执行面，真正退出 App 时会一起停止。
+              桌面端前端壳已重设计为高密度工作台。App 只负责登录、绑定、状态和 helper 生命周期；真正的
+              `host.*` 执行仍由 hostd 承载。
             </p>
           </div>
           <div className="hero-meta">
+            <RoleMarker role="machine" />
             <span className={statusTone(snapshot)}>
               {snapshot?.status.online ? 'Helper 在线' : '等待 Helper 在线'}
             </span>
+            <StatusPill status={snapshot?.status.online ? 'running' : snapshot?.status.last_error ? 'failed' : 'waiting'} />
+            {createDigitalHumanStatusSummary(digitalHumanVisualState)}
             <span className={snapshot ? pairingTone(snapshot.status.pairing_state) : 'pill'}>
               {snapshot?.status.pairing_state ?? 'unknown'}
             </span>
-            <span className="pill">
-              {snapshot ? `Helper ${snapshot.helper_management.mode}` : 'Helper 托管中'}
-            </span>
+            <button className="hero-action" type="button" onClick={() => setDigitalHumanMode((prev) => !prev)}>
+              {digitalHumanMode ? '隐藏数字人' : '数字人模式'}
+            </button>
           </div>
         </section>
 
+        <WorkbenchShell title="运行时总览" subtitle="登录、绑定、helper 和执行面状态归一展示" rail={workbenchRail}>
+        {digitalHumanMode ? (
+          <DigitalHumanPanel
+            visualState={digitalHumanVisualState}
+            sessionActive={digitalHumanSessionActive}
+            onStartVoice={startDigitalHumanVoiceSession}
+            onInterrupt={interruptDigitalHumanVoiceSession}
+          />
+        ) : null}
         <section className="stats-grid">
           {cards.map((card) => (
             <article className="glass-card stat-card" key={card.label}>
@@ -345,6 +435,14 @@ export default function App() {
             </article>
           ))}
         </section>
+        <section className="desktop-process-summary">
+          <div className="card-header">
+            <h2>执行面过程摘要</h2>
+            <span className="micro-note">由共享 AgentProcessView 合成</span>
+          </div>
+          <ProcessTimeline view={runtimeProcessView} />
+        </section>
+        </WorkbenchShell>
 
         <section className="content-grid">
           <article className="glass-card">

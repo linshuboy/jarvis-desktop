@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "vite build",
+    "test": "tsc --noEmit",
     "preview": "vite preview --host 127.0.0.1 --port 4174",
     "build:icons": "python3 ./scripts/generate_tauri_icons.py",
     "build:hostd": "bash ./scripts/build_hostd.sh",
@@ -14,6 +15,7 @@
     "tauri:build:linux": "bash ./scripts/build_linux_packages.sh"
   },
   "dependencies": {
+    "@agi/frontend": "file:../../packages/frontend",
     "@tauri-apps/api": "^2.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
