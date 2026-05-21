@@ -1,4 +1,5 @@
 name: client-build
+run-name: client-build ${{ inputs.source_sha || github.sha }}
 
 on:
   push:
@@ -50,6 +51,8 @@ jobs:
         shell: bash
         env:
           MAIN_REPOSITORY: ${{ inputs.main_repository || vars.MAIN_RELEASE_REPOSITORY }}
+          SOURCE_REPOSITORY: ${{ inputs.source_repository || vars.MAIN_REPOSITORY || 'linshuboy/JARVISAI' }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
           REQUESTED_PUBLISH_RELEASE: ${{ inputs.publish_release }}
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
@@ -72,6 +75,8 @@ jobs:
             exit 1
           fi
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
+          echo "source_repository=${SOURCE_REPOSITORY}" >>"$GITHUB_OUTPUT"
+          echo "source_ref=${SOURCE_SHA:-main}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -82,6 +87,22 @@ jobs:
           repository: ${{ env.HOSTD_REPOSITORY }}
           path: runtime/hostd
           token: ${{ secrets.CROSS_REPO_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.settings.outputs.source_repository }}
+          ref: ${{ steps.settings.outputs.source_ref }}
+          path: _main
+          sparse-checkout: |
+            packages/frontend
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+      - name: Link shared frontend package
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          rm -rf packages/frontend
+          cp -R _main/packages/frontend packages/frontend
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -162,6 +183,8 @@ jobs:
         shell: bash
         env:
           MAIN_REPOSITORY: ${{ inputs.main_repository || vars.MAIN_RELEASE_REPOSITORY }}
+          SOURCE_REPOSITORY: ${{ inputs.source_repository || vars.MAIN_REPOSITORY || 'linshuboy/JARVISAI' }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
           REQUESTED_PUBLISH_RELEASE: ${{ inputs.publish_release }}
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
@@ -184,6 +207,8 @@ jobs:
             exit 1
           fi
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
+          echo "source_repository=${SOURCE_REPOSITORY}" >>"$GITHUB_OUTPUT"
+          echo "source_ref=${SOURCE_SHA:-main}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -194,6 +219,22 @@ jobs:
           repository: ${{ env.HOSTD_REPOSITORY }}
           path: runtime/hostd
           token: ${{ secrets.CROSS_REPO_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.settings.outputs.source_repository }}
+          ref: ${{ steps.settings.outputs.source_ref }}
+          path: _main
+          sparse-checkout: |
+            packages/frontend
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+      - name: Link shared frontend package
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          rm -rf packages/frontend
+          cp -R _main/packages/frontend packages/frontend
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -267,6 +308,8 @@ jobs:
         shell: bash
         env:
           MAIN_REPOSITORY: ${{ inputs.main_repository || vars.MAIN_RELEASE_REPOSITORY }}
+          SOURCE_REPOSITORY: ${{ inputs.source_repository || vars.MAIN_REPOSITORY || 'linshuboy/JARVISAI' }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
           REQUESTED_PUBLISH_RELEASE: ${{ inputs.publish_release }}
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
@@ -289,6 +332,8 @@ jobs:
             exit 1
           fi
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
+          echo "source_repository=${SOURCE_REPOSITORY}" >>"$GITHUB_OUTPUT"
+          echo "source_ref=${SOURCE_SHA:-main}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -299,6 +344,22 @@ jobs:
           repository: ${{ env.HOSTD_REPOSITORY }}
           path: runtime/hostd
           token: ${{ secrets.CROSS_REPO_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.settings.outputs.source_repository }}
+          ref: ${{ steps.settings.outputs.source_ref }}
+          path: _main
+          sparse-checkout: |
+            packages/frontend
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+      - name: Link shared frontend package
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          rm -rf packages/frontend
+          cp -R _main/packages/frontend packages/frontend
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
