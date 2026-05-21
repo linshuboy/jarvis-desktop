@@ -22,9 +22,9 @@ const helperMethods = [
 let mockStatus: PairStatus = {
   bridge_mode: 'mock-web-bridge',
   helper_available: true,
-  config_path: '~/Library/Application Support/JARVIS Desktop/hostd/config.json',
-  state_path: '~/Library/Application Support/JARVIS Desktop/hostd/state.json',
-  control_socket_path: '~/Library/Application Support/JARVIS Desktop/hostd/control.sock',
+  config_path: '~/Library/Application Support/Sunvisai Desktop/hostd/config.json',
+  state_path: '~/Library/Application Support/Sunvisai Desktop/hostd/state.json',
+  control_socket_path: '~/Library/Application Support/Sunvisai Desktop/hostd/control.sock',
   runtime_id: 'mock-runtime-id',
   pairing_state: 'pending',
   has_runtime_token: false,
@@ -37,7 +37,7 @@ let mockStatus: PairStatus = {
 }
 
 let mockAuth: DesktopAuthState = {
-  server_url: 'https://jarvis.example.com/',
+  server_url: 'https://sunvisai.example.com/',
   authenticated: false,
   user: null,
   bootstrap_init_done: true,
@@ -69,7 +69,7 @@ let mockConfigValidation: ConfigValidation = {
 
 let mockHelperManagement: HelperManagementStatus = {
   mode: 'app-managed',
-  data_root: '~/Library/Application Support/JARVIS Desktop/hostd',
+  data_root: '~/Library/Application Support/Sunvisai Desktop/hostd',
 }
 
 let mockAutostartStatus: AppAutostartStatus = {
@@ -77,8 +77,8 @@ let mockAutostartStatus: AppAutostartStatus = {
   supported: true,
   enabled: false,
   mode: 'background',
-  entry_path: '~/Library/LaunchAgents/ai.jarvis.desktop.autostart.plist',
-  target_path: '/Applications/JARVIS Desktop.app/Contents/MacOS/JARVIS Desktop',
+  entry_path: '~/Library/LaunchAgents/ai.sunvisai.desktop.autostart.plist',
+  target_path: '/Applications/Sunvisai Desktop.app/Contents/MacOS/Sunvisai Desktop',
 }
 
 async function resolveInvoke(): Promise<TauriInvoke | null> {
@@ -93,7 +93,7 @@ async function resolveInvoke(): Promise<TauriInvoke | null> {
 function buildMockSnapshot(): DesktopSnapshot {
   return {
     bridge: mockStatus.bridge_mode,
-    hostd_bin_path: '~/Library/Application Support/JARVIS Desktop/hostd/macos-aarch64/hostd',
+    hostd_bin_path: '~/Library/Application Support/Sunvisai Desktop/hostd/macos-aarch64/hostd',
     app_close_action: 'hide',
     app_background_launch: false,
     app_autostart: { ...mockAutostartStatus },

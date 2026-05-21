@@ -396,7 +396,7 @@ export default function App() {
         <section className="hero">
           <div>
             <p className="eyebrow">Desktop Runtime Console</p>
-            <h1>JARVIS Desktop</h1>
+            <h1>Sunvisai Desktop</h1>
             <p className="hero-copy">
               桌面端前端壳已重设计为高密度工作台。App 只负责登录、绑定、状态和 helper 生命周期；真正的
               `host.*` 执行仍由 hostd 承载。
@@ -579,7 +579,7 @@ export default function App() {
               <span>Server URL</span>
               <input
                 onChange={(event) => setServerUrlInput(event.target.value)}
-                placeholder="https://jarvis.example.com"
+                placeholder="https://sunvisai.example.com"
                 type="url"
                 value={serverUrlInput}
               />

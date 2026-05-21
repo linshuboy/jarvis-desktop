@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "JARVIS Desktop",
+  "productName": "Sunvisai Desktop",
   "version": "0.1.0",
   "identifier": "ai.agi.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "JARVIS Desktop",
+        "title": "Sunvisai Desktop",
         "width": 1180,
         "height": 840,
         "resizable": true

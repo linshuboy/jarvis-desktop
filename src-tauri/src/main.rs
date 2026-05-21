@@ -149,7 +149,7 @@ fn install_tray_icon(app: &AppHandle) -> Result<(), String> {
 
     let mut tray_builder = TrayIconBuilder::with_id("desktop-tray")
         .menu(&menu)
-        .tooltip("JARVIS Desktop")
+        .tooltip("Sunvisai Desktop")
         .on_menu_event(|app, event| {
             handle_tray_menu_event(app, event);
         });
@@ -218,7 +218,7 @@ fn main() {
             commands::desktop_quit_application
         ])
         .build(tauri::generate_context!())
-        .expect("failed to build JARVIS desktop app");
+        .expect("failed to build Sunvisai desktop app");
 
     app.run(|app_handle, event| {
         #[cfg(target_os = "macos")]

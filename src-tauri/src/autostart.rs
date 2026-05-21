@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[cfg(target_os = "macos")]
-const MACOS_AUTOSTART_LABEL: &str = "ai.jarvis.desktop.autostart";
+const MACOS_AUTOSTART_LABEL: &str = "ai.sunvisai.desktop.autostart";
 #[cfg(target_os = "windows")]
 const WINDOWS_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(target_os = "windows")]
-const WINDOWS_RUN_VALUE: &str = "JARVISDesktop";
-const LINUX_AUTOSTART_FILE: &str = "ai.jarvis.desktop.desktop";
+const WINDOWS_RUN_VALUE: &str = "SunvisaiDesktop";
+const LINUX_AUTOSTART_FILE: &str = "ai.sunvisai.desktop.desktop";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppAutostartStatus {
@@ -311,7 +311,7 @@ fn linux_autostart_file_path() -> Result<PathBuf, String> {
 #[cfg(target_os = "linux")]
 fn render_linux_desktop_entry(executable_path: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nVersion=1.0\nName=JARVIS Desktop\nComment=Launch JARVIS Desktop in background mode on login\nExec={} --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nVersion=1.0\nName=Sunvisai Desktop\nComment=Launch Sunvisai Desktop in background mode on login\nExec={} --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
         desktop_exec_escape(&executable_path.display().to_string())
     )
 }

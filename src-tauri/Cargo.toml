@@ -1,8 +1,8 @@
 [package]
 name = "agi-desktop"
 version = "0.1.0"
-description = "JARVIS Desktop shell for Batch E"
-authors = ["JARVISAI"]
+description = "Sunvisai Desktop shell for Batch E"
+authors = ["Sunvisai"]
 edition = "2021"
 
 [build-dependencies]

@@ -1535,19 +1535,19 @@ mod tests {
 
     #[test]
     fn normalize_server_url_accepts_plain_hostname() {
-        let normalized = normalize_server_url("jarvis.example.com").expect("normalize server url");
-        assert_eq!(normalized, "https://jarvis.example.com/");
+        let normalized = normalize_server_url("sunvisai.example.com").expect("normalize server url");
+        assert_eq!(normalized, "https://sunvisai.example.com/");
     }
 
     #[test]
     fn normalize_server_url_preserves_path_prefix() {
-        let normalized = normalize_server_url("https://jarvis.example.com/desktop")
+        let normalized = normalize_server_url("https://sunvisai.example.com/desktop")
             .expect("normalize server url");
-        assert_eq!(normalized, "https://jarvis.example.com/desktop/");
+        assert_eq!(normalized, "https://sunvisai.example.com/desktop/");
         let login_url = api_url(&normalized, "api/auth/login").expect("api url");
         assert_eq!(
             login_url.as_str(),
-            "https://jarvis.example.com/desktop/api/auth/login"
+            "https://sunvisai.example.com/desktop/api/auth/login"
         );
     }
 
