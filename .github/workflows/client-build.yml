@@ -1,5 +1,5 @@
 name: client-build
-run-name: client-build ${{ inputs.source_sha || github.sha }}
+run-name: client-build ${{ inputs.source_sha || github.sha }} ${{ inputs.release_request_id }}
 
 on:
   push:
@@ -28,6 +28,10 @@ on:
         type: string
       source_sha:
         description: 'Main repository source SHA for traceability'
+        required: false
+        type: string
+      release_request_id:
+        description: 'Main release workflow request identifier'
         required: false
         type: string
 
@@ -160,15 +164,31 @@ jobs:
           name: desktop-linux-bundles
           path: apps/desktop/release-assets/*
           if-no-files-found: error
-      - uses: softprops/action-gh-release@v2
+      - name: Upload desktop assets to main release
         if: steps.settings.outputs.should_publish == 'true'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
-        with:
-          repository: ${{ steps.settings.outputs.main_repository }}
-          tag_name: ${{ steps.settings.outputs.release_tag }}
-          files: apps/desktop/release-assets/*
-          fail_on_unmatched_files: true
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          MAIN_REPOSITORY: ${{ steps.settings.outputs.main_repository }}
+          RELEASE_TAG: ${{ steps.settings.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "Missing CROSS_REPO_TOKEN secret for release upload." >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          assets=(release-assets/*)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "No desktop release assets found." >&2
+            exit 1
+          fi
+          if ! gh release view "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" >/dev/null 2>&1; then
+            if ! gh release create "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" --title "${RELEASE_TAG}" --notes "Release assets are uploaded by split child repositories."; then
+              gh release view "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" >/dev/null
+            fi
+          fi
+          gh release upload "${RELEASE_TAG}" "${assets[@]}" --repo "${MAIN_REPOSITORY}" --clobber
 
   desktop-windows:
     runs-on: windows-latest
@@ -273,15 +293,31 @@ jobs:
           name: desktop-windows-bundles
           path: apps/desktop/release-assets/*
           if-no-files-found: error
-      - uses: softprops/action-gh-release@v2
+      - name: Upload desktop assets to main release
         if: steps.settings.outputs.should_publish == 'true'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
-        with:
-          repository: ${{ steps.settings.outputs.main_repository }}
-          tag_name: ${{ steps.settings.outputs.release_tag }}
-          files: apps/desktop/release-assets/*
-          fail_on_unmatched_files: true
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          MAIN_REPOSITORY: ${{ steps.settings.outputs.main_repository }}
+          RELEASE_TAG: ${{ steps.settings.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "Missing CROSS_REPO_TOKEN secret for release upload." >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          assets=(release-assets/*)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "No desktop release assets found." >&2
+            exit 1
+          fi
+          if ! gh release view "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" >/dev/null 2>&1; then
+            if ! gh release create "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" --title "${RELEASE_TAG}" --notes "Release assets are uploaded by split child repositories."; then
+              gh release view "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" >/dev/null
+            fi
+          fi
+          gh release upload "${RELEASE_TAG}" "${assets[@]}" --repo "${MAIN_REPOSITORY}" --clobber
 
   desktop-macos:
     runs-on: macos-latest
@@ -400,12 +436,28 @@ jobs:
           name: desktop-macos-${{ matrix.artifact_suffix }}-bundles
           path: apps/desktop/release-assets/*
           if-no-files-found: error
-      - uses: softprops/action-gh-release@v2
+      - name: Upload desktop assets to main release
         if: steps.settings.outputs.should_publish == 'true'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
-        with:
-          repository: ${{ steps.settings.outputs.main_repository }}
-          tag_name: ${{ steps.settings.outputs.release_tag }}
-          files: apps/desktop/release-assets/*
-          fail_on_unmatched_files: true
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          MAIN_REPOSITORY: ${{ steps.settings.outputs.main_repository }}
+          RELEASE_TAG: ${{ steps.settings.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "Missing CROSS_REPO_TOKEN secret for release upload." >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          assets=(release-assets/*)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "No desktop release assets found." >&2
+            exit 1
+          fi
+          if ! gh release view "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" >/dev/null 2>&1; then
+            if ! gh release create "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" --title "${RELEASE_TAG}" --notes "Release assets are uploaded by split child repositories."; then
+              gh release view "${RELEASE_TAG}" --repo "${MAIN_REPOSITORY}" >/dev/null
+            fi
+          fi
+          gh release upload "${RELEASE_TAG}" "${assets[@]}" --repo "${MAIN_REPOSITORY}" --clobber
