@@ -18,6 +18,7 @@ import {
   loginDesktop,
   logoutDesktop,
   quitDesktopApplication,
+  reconnectRuntime,
   setDesktopAutostart,
   syncDesktopAuthState,
   validateDesktopConfig,
@@ -98,14 +99,8 @@ export default function App() {
       setError(nextError instanceof Error ? nextError.message : '加载桌面状态失败')
       setLoading(false)
     })
-    const timer = window.setInterval(() => {
-      refreshSnapshot().catch(() => {
-        return
-      })
-    }, 5000)
     return () => {
       disposed = true
-      window.clearInterval(timer)
     }
   }, [])
 
@@ -276,6 +271,21 @@ export default function App() {
       await refreshSnapshot()
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '绑定当前设备失败')
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  async function handleReconnectRuntime() {
+    setActionPending(true)
+    setFlash('')
+    setError('')
+    try {
+      await reconnectRuntime()
+      setFlash('已请求 helper 重新连接 Gateway')
+      await refreshSnapshot()
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '重新连接失败')
     } finally {
       setActionPending(false)
     }
@@ -609,6 +619,13 @@ export default function App() {
                   </div>
                 </dl>
                 <div className="button-row">
+                  <button
+                    disabled={actionPending || !snapshot?.status.has_runtime_token}
+                    onClick={() => void handleReconnectRuntime()}
+                    type="button"
+                  >
+                    重新连接
+                  </button>
                   <button disabled={actionPending} onClick={() => void handleBindCurrentRuntime()} type="button">
                     重新绑定当前设备
                   </button>

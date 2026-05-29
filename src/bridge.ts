@@ -208,6 +208,24 @@ export async function bindCurrentRuntime(): Promise<PairStatus> {
   return invoke<PairStatus>('desktop_bind_current_runtime')
 }
 
+export async function reconnectRuntime(): Promise<PairStatus> {
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    if (!mockStatus.has_runtime_token) {
+      throw new Error('当前设备尚未绑定，无法重新连接')
+    }
+    mockStatus = {
+      ...mockStatus,
+      online: true,
+      connection_state: 'connected',
+      last_connected_at: new Date().toISOString(),
+      last_error: '',
+    }
+    return { ...mockStatus }
+  }
+  return invoke<PairStatus>('desktop_reconnect_runtime')
+}
+
 export async function logoutDesktop(): Promise<DesktopAuthState> {
   const invoke = await resolveInvoke()
   if (invoke === null) {

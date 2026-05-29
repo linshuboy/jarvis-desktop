@@ -123,7 +123,14 @@ fn hostd_sidecar_source_name() -> &'static str {
     hostd_binary_name()
 }
 
-fn resolve_hostd_bin(_app: &AppHandle) -> PathBuf {
+fn push_hostd_bin_candidates(candidates: &mut Vec<PathBuf>, dir: &Path) {
+    for name in [hostd_binary_name(), hostd_sidecar_source_name()] {
+        candidates.push(dir.join(name));
+        candidates.push(dir.join("binaries").join(name));
+    }
+}
+
+fn resolve_hostd_bin(app: &AppHandle) -> PathBuf {
     if let Ok(path) = env::var("AGI_HOSTD_BIN") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -131,27 +138,31 @@ fn resolve_hostd_bin(_app: &AppHandle) -> PathBuf {
         }
     }
 
+    let mut candidates = Vec::new();
     if let Ok(current_exe) = env::current_exe() {
         if let Some(parent) = current_exe.parent() {
-            let bundled_path = parent.join(hostd_binary_name());
-            if bundled_path.is_file() {
-                return bundled_path;
-            }
+            push_hostd_bin_candidates(&mut candidates, parent);
+            push_hostd_bin_candidates(&mut candidates, &parent.join("../Resources"));
         }
     }
 
-    let source_sidecar_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(hostd_sidecar_source_name());
-    if source_sidecar_path.is_file() {
-        return source_sidecar_path;
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        push_hostd_bin_candidates(&mut candidates, &resource_dir);
     }
 
-    let workspace_hostd_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../runtime/hostd")
-        .join(hostd_binary_name());
-    if workspace_hostd_path.is_file() {
-        return workspace_hostd_path;
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    push_hostd_bin_candidates(&mut candidates, &manifest_dir);
+
+    candidates.push(
+        manifest_dir
+            .join("../../../runtime/hostd")
+            .join(hostd_binary_name()),
+    );
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return candidate;
+        }
     }
 
     PathBuf::from(hostd_binary_name())
@@ -405,6 +416,68 @@ fn bootstrap_hostd_files(paths: &HostdPaths) -> Result<(), String> {
             error
         )
     })
+}
+
+fn hostd_connection_is_configured(paths: &HostdPaths) -> Result<bool, String> {
+    if env::var("HOSTD_GATEWAY_WS_URL")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+    let content = match fs::read(&paths.config_path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "failed to read desktop helper config {}: {}",
+                paths.config_path.display(),
+                error
+            ))
+        }
+    };
+    let payload: Value = serde_json::from_slice(&content).map_err(|error| {
+        format!(
+            "failed to decode desktop helper config {}: {}",
+            paths.config_path.display(),
+            error
+        )
+    })?;
+    Ok(payload
+        .get("gateway")
+        .and_then(|gateway| gateway.get("ws_url"))
+        .and_then(Value::as_str)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false))
+}
+
+fn helper_unconfigured_message() -> &'static str {
+    "请先填写 Server URL 并登录，客户端会自动写入 helper 连接配置并启动连接"
+}
+
+fn validate_hostd_config(app: &AppHandle, paths: &HostdPaths) -> Value {
+    match hostd_connection_is_configured(paths) {
+        Ok(true) => match run_hostd_json_with_paths(app, &["config", "validate"], paths) {
+            Ok(value) => value,
+            Err(error) => json!({
+                "valid": false,
+                "error": error,
+            }),
+        },
+        Ok(false) => json!({
+            "valid": false,
+            "error": helper_unconfigured_message(),
+            "config_path": paths.config_path.display().to_string(),
+            "state_path": paths.state_path.display().to_string(),
+        }),
+        Err(error) => json!({
+            "valid": false,
+            "error": error,
+            "config_path": paths.config_path.display().to_string(),
+            "state_path": paths.state_path.display().to_string(),
+        }),
+    }
 }
 
 fn home_dir() -> Result<PathBuf, String> {
@@ -1111,6 +1184,9 @@ pub fn ensure_helper_running(app: &AppHandle) -> Result<(), String> {
     if helper_available(app, &paths) {
         return Ok(());
     }
+    if !hostd_connection_is_configured(&paths)? {
+        return Err(helper_unconfigured_message().to_string());
+    }
     run_hostd_json_with_paths(app, &["config", "validate"], &paths)?;
     spawn_hostd(app, &paths)?;
     for _ in 0..30 {
@@ -1126,8 +1202,12 @@ pub fn ensure_helper_running(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn recover_helper_after_desktop_launch(app: &AppHandle) -> Result<(), String> {
-    ensure_helper_running(app)?;
     let paths = resolve_hostd_paths(app)?;
+    bootstrap_hostd_files(&paths)?;
+    if !hostd_connection_is_configured(&paths)? {
+        return Ok(());
+    }
+    ensure_helper_running(app)?;
     let snapshot = helper_snapshot(app, &paths)?;
     if should_request_helper_reconnect(&snapshot) {
         let _ = request_helper_reconnect(app, &paths)?;
@@ -1385,20 +1465,21 @@ fn login_and_bind(
 #[tauri::command]
 pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
     let paths = resolve_hostd_paths(&app)?;
-    let helper_startup_error = ensure_helper_running(&app).err();
+    let helper_startup_error = match bootstrap_hostd_files(&paths) {
+        Ok(()) => match hostd_connection_is_configured(&paths) {
+            Ok(true) => ensure_helper_running(&app).err(),
+            Ok(false) => None,
+            Err(error) => Some(error),
+        },
+        Err(error) => Some(error),
+    };
     let resolved_hostd_bin = resolve_hostd_bin(&app);
     let version = run_hostd_json(&app, &["version"])?;
     let status = load_runtime_snapshot(&app, &paths)?;
     let auth = auth_state_json(&read_auth_session(&paths.auth_session_path)?, None, None);
     let app_autostart = serde_json::to_value(autostart::status())
         .map_err(|error| format!("failed to encode desktop autostart status: {}", error))?;
-    let config_validation = match run_hostd_json_with_paths(&app, &["config", "validate"], &paths) {
-        Ok(value) => value,
-        Err(error) => json!({
-            "valid": false,
-            "error": error,
-        }),
-    };
+    let config_validation = validate_hostd_config(&app, &paths);
     Ok(json!({
         "bridge": "tauri-hostd-ipc",
         "hostd_bin_path": resolved_hostd_bin.display().to_string(),
@@ -1420,13 +1501,8 @@ pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
 #[tauri::command]
 pub fn desktop_validate_config(app: AppHandle) -> Result<Value, String> {
     let paths = resolve_hostd_paths(&app)?;
-    match run_hostd_json_with_paths(&app, &["config", "validate"], &paths) {
-        Ok(value) => Ok(value),
-        Err(error) => Ok(json!({
-            "valid": false,
-            "error": error,
-        })),
-    }
+    bootstrap_hostd_files(&paths)?;
+    Ok(validate_hostd_config(&app, &paths))
 }
 
 #[tauri::command]
@@ -1464,6 +1540,27 @@ pub fn desktop_login(
 pub fn desktop_bind_current_runtime(app: AppHandle) -> Result<Value, String> {
     let paths = resolve_hostd_paths(&app)?;
     bind_current_runtime(&app, &paths)
+}
+
+#[tauri::command]
+pub fn desktop_reconnect_runtime(app: AppHandle) -> Result<Value, String> {
+    let paths = resolve_hostd_paths(&app)?;
+    bootstrap_hostd_files(&paths)?;
+    if !hostd_connection_is_configured(&paths)? {
+        return Err(helper_unconfigured_message().to_string());
+    }
+    if !helper_available(&app, &paths) {
+        return Err(String::from("helper 未运行，无法执行纯重连"));
+    }
+    let snapshot = request_helper_reconnect(&app, &paths)?;
+    Ok(normalize_socket_snapshot(
+        "direct-ipc",
+        true,
+        &paths.config_path,
+        &paths.state_path,
+        &paths.control_socket_path,
+        snapshot,
+    ))
 }
 
 #[tauri::command]
@@ -1535,7 +1632,8 @@ mod tests {
 
     #[test]
     fn normalize_server_url_accepts_plain_hostname() {
-        let normalized = normalize_server_url("sunvisai.example.com").expect("normalize server url");
+        let normalized =
+            normalize_server_url("sunvisai.example.com").expect("normalize server url");
         assert_eq!(normalized, "https://sunvisai.example.com/");
     }
 
