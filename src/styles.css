@@ -569,6 +569,7 @@ textarea {
   margin: 16px 0 0;
   padding: 12px 14px;
   border-radius: 14px;
+  white-space: pre-wrap;
 }
 
 .flash-success {

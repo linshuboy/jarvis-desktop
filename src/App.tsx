@@ -37,6 +37,16 @@ function formatTimestamp(value: string): string {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
+function describeError(value: unknown, fallback: string): string {
+  if (value instanceof Error && value.message.trim()) {
+    return value.message
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+  return fallback
+}
+
 function pairingTone(state: string): string {
   switch (state) {
     case 'paired':
@@ -96,7 +106,7 @@ export default function App() {
       if (disposed) {
         return
       }
-      setError(nextError instanceof Error ? nextError.message : '加载桌面状态失败')
+      setError(describeError(nextError, '加载桌面状态失败'))
       setLoading(false)
     })
     return () => {
@@ -173,7 +183,7 @@ export default function App() {
         if (disposed) {
           return
         }
-        setError(nextError instanceof Error ? nextError.message : '自动绑定当前设备失败')
+        setError(describeError(nextError, '自动绑定当前设备失败'))
       })
       .finally(() => {
         if (disposed) {
@@ -231,7 +241,7 @@ export default function App() {
       }
       await refreshSnapshot()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '配置校验失败')
+      setError(describeError(nextError, '配置校验失败'))
     } finally {
       setActionPending(false)
     }
@@ -245,17 +255,26 @@ export default function App() {
       const result = await loginDesktop(serverUrlInput, usernameInput, passwordInput)
       setAuthState(result.auth)
       setPasswordInput('')
+      let bindError = ''
       if (result.bind_succeeded) {
         setFlash('登录成功，当前设备已自动绑定并写入 helper')
       } else {
         setFlash('登录成功，但当前设备自动绑定失败，可在下方重试')
-        if (result.bind_error) {
-          setError(result.bind_error)
-        }
+        bindError = result.bind_error?.trim() || '当前设备自动绑定失败'
+        setError(bindError)
       }
-      await refreshSnapshot()
+      try {
+        await refreshSnapshot()
+      } catch (snapshotError) {
+        const snapshotMessage = describeError(snapshotError, '登录后刷新本机 helper 状态失败')
+        setError(
+          bindError
+            ? `${bindError}\n状态刷新失败：${snapshotMessage}`
+            : `登录成功，但刷新本机 helper 状态失败：${snapshotMessage}`,
+        )
+      }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '登录失败')
+      setError(describeError(nextError, '登录失败'))
     } finally {
       setActionPending(false)
     }
@@ -270,7 +289,7 @@ export default function App() {
       setFlash('当前设备已重新绑定并刷新 helper token')
       await refreshSnapshot()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '绑定当前设备失败')
+      setError(describeError(nextError, '绑定当前设备失败'))
     } finally {
       setActionPending(false)
     }
@@ -285,7 +304,7 @@ export default function App() {
       setFlash('已请求 helper 重新连接 Gateway')
       await refreshSnapshot()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '重新连接失败')
+      setError(describeError(nextError, '重新连接失败'))
     } finally {
       setActionPending(false)
     }
@@ -301,7 +320,7 @@ export default function App() {
       setFlash('账号已退出，当前设备 token 已清除')
       await refreshSnapshot()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '退出账号失败')
+      setError(describeError(nextError, '退出账号失败'))
     } finally {
       setActionPending(false)
     }
@@ -316,7 +335,7 @@ export default function App() {
       setFlash(enabled ? 'App 登录自启已开启' : 'App 登录自启已关闭')
       await refreshSnapshot()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '更新 App 自启状态失败')
+      setError(describeError(nextError, '更新 App 自启状态失败'))
     } finally {
       setActionPending(false)
     }
@@ -329,7 +348,7 @@ export default function App() {
     try {
       await quitDesktopApplication()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '退出 App 失败')
+      setError(describeError(nextError, '退出 App 失败'))
       setActionPending(false)
     }
   }
@@ -521,6 +540,7 @@ export default function App() {
                     <dd>{snapshot.version.commit}</dd>
                   </div>
                 </dl>
+                {snapshot.version.error ? <p className="flash flash-error">hostd version：{snapshot.version.error}</p> : null}
                 {snapshot.helper_management.startup_error ? <p className="flash flash-error">{snapshot.helper_management.startup_error}</p> : null}
               </>
             ) : null}

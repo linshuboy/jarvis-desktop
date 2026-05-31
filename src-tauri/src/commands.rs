@@ -177,6 +177,20 @@ fn command_error(bin: &Path, args: &[&str], stderr: &[u8]) -> String {
     }
 }
 
+fn stage_error(stage: &str, error: String) -> String {
+    format!("{}：{}", stage, error)
+}
+
+fn unavailable_hostd_version(error: &str) -> Value {
+    json!({
+        "version": "unavailable",
+        "commit": "",
+        "build_date": "",
+        "go_version": "",
+        "error": error,
+    })
+}
+
 fn run_hostd_json(app: &AppHandle, args: &[&str]) -> Result<Value, String> {
     let bin = resolve_hostd_bin(app);
     let output = Command::new(&bin)
@@ -1355,15 +1369,17 @@ fn clear_runtime_token_direct(app: &AppHandle) -> Result<Value, String> {
 }
 
 fn bind_current_runtime(app: &AppHandle, paths: &HostdPaths) -> Result<Value, String> {
-    let mut session = read_auth_session(&paths.auth_session_path)?;
+    let mut session = read_auth_session(&paths.auth_session_path)
+        .map_err(|error| stage_error("读取桌面登录会话失败", error))?;
     let invite_payload = post_authenticated_json(
         &mut session,
         &paths.auth_session_path,
         "api/host/runtime/invites",
         &json!({ "expires_in_seconds": 900 }),
-    )?;
+    )
+    .map_err(|error| stage_error("创建设备绑定邀请失败", error))?;
     let invite: CreateBindingInviteResponse = serde_json::from_value(invite_payload)
-        .map_err(|error| format!("failed to decode binding invite response: {}", error))?;
+        .map_err(|error| format!("解析设备绑定邀请失败：{}", error))?;
     let invite_url = invite
         .invite_url
         .or_else(|| {
@@ -1380,9 +1396,7 @@ fn bind_current_runtime(app: &AppHandle, paths: &HostdPaths) -> Result<Value, St
         .unwrap_or_default();
     let trimmed_invite_url = invite_url.trim().to_string();
     if trimmed_invite_url.is_empty() {
-        return Err(String::from(
-            "binding invite response did not include invite_url",
-        ));
+        return Err(String::from("设备绑定邀请缺少 invite_url"));
     }
     let claim_value = run_hostd_json_with_paths(
         app,
@@ -1393,8 +1407,10 @@ fn bind_current_runtime(app: &AppHandle, paths: &HostdPaths) -> Result<Value, St
             trimmed_invite_url.as_str(),
         ],
         paths,
-    )?;
-    let _ = ensure_helper_running(app);
+    )
+    .map_err(|error| stage_error("执行本机 hostd 绑定失败", error))?;
+    ensure_helper_running(app)
+        .map_err(|error| stage_error("绑定已写入但 helper 启动失败", error))?;
     Ok(claim_value)
 }
 
@@ -1465,21 +1481,69 @@ fn login_and_bind(
 #[tauri::command]
 pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
     let paths = resolve_hostd_paths(&app)?;
-    let helper_startup_error = match bootstrap_hostd_files(&paths) {
+    let mut diagnostic_errors = Vec::new();
+    if let Some(error) = match bootstrap_hostd_files(&paths) {
         Ok(()) => match hostd_connection_is_configured(&paths) {
             Ok(true) => ensure_helper_running(&app).err(),
             Ok(false) => None,
             Err(error) => Some(error),
         },
         Err(error) => Some(error),
-    };
+    } {
+        diagnostic_errors.push(error);
+    }
     let resolved_hostd_bin = resolve_hostd_bin(&app);
-    let version = run_hostd_json(&app, &["version"])?;
-    let status = load_runtime_snapshot(&app, &paths)?;
+    let version = match run_hostd_json(&app, &["version"]) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostic_errors.push(stage_error("检测 hostd 版本失败", error.clone()));
+            unavailable_hostd_version(error.as_str())
+        }
+    };
+    let status = match load_runtime_snapshot(&app, &paths) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostic_errors.push(stage_error("读取 helper 状态失败", error.clone()));
+            match read_state_file(&paths.state_path) {
+                Ok(mut state) => {
+                    if state.last_error.as_deref().unwrap_or("").trim().is_empty() {
+                        state.last_error = Some(error);
+                    }
+                    build_state_fallback(
+                        "snapshot-fallback",
+                        false,
+                        &paths.config_path,
+                        &paths.state_path,
+                        &paths.control_socket_path,
+                        state,
+                    )
+                }
+                Err(state_error) => {
+                    diagnostic_errors.push(stage_error("读取本地 runtime state 失败", state_error));
+                    build_state_fallback(
+                        "snapshot-fallback",
+                        false,
+                        &paths.config_path,
+                        &paths.state_path,
+                        &paths.control_socket_path,
+                        PersistedState {
+                            last_error: Some(error),
+                            ..PersistedState::default()
+                        },
+                    )
+                }
+            }
+        }
+    };
     let auth = auth_state_json(&read_auth_session(&paths.auth_session_path)?, None, None);
     let app_autostart = serde_json::to_value(autostart::status())
         .map_err(|error| format!("failed to encode desktop autostart status: {}", error))?;
     let config_validation = validate_hostd_config(&app, &paths);
+    let startup_error = if diagnostic_errors.is_empty() {
+        Value::Null
+    } else {
+        Value::String(diagnostic_errors.join("\n"))
+    };
     Ok(json!({
         "bridge": "tauri-hostd-ipc",
         "hostd_bin_path": resolved_hostd_bin.display().to_string(),
@@ -1493,7 +1557,7 @@ pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
         "helper_management": {
             "mode": HELPER_MANAGEMENT_MODE,
             "data_root": paths.data_root.display().to_string(),
-            "startup_error": helper_startup_error,
+            "startup_error": startup_error,
         },
     }))
 }

@@ -3,6 +3,7 @@ export type BuildInfo = {
   commit: string
   build_date: string
   go_version: string
+  error?: string
 }
 
 export type DesktopAuthUser = {
