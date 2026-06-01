@@ -3,11 +3,12 @@ use crate::sync_tray_autostart_state;
 
 use std::env;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -423,7 +424,7 @@ fn bootstrap_hostd_files(paths: &HostdPaths) -> Result<(), String> {
     let mut content = serde_json::to_vec_pretty(&payload)
         .map_err(|error| format!("failed to encode desktop helper config template: {}", error))?;
     content.push(b'\n');
-    fs::write(&paths.config_path, content).map_err(|error| {
+    write_file_atomic(&paths.config_path, &content).map_err(|error| {
         format!(
             "failed to write desktop helper config {}: {}",
             paths.config_path.display(),
@@ -534,8 +535,51 @@ fn write_state_file(path: &Path, state: &PersistedState) -> Result<(), String> {
         .map_err(|error| format!("failed to encode state file {}: {}", path.display(), error))?;
     let mut output = payload;
     output.push(b'\n');
-    fs::write(path, output)
+    write_file_atomic(path, &output)
         .map_err(|error| format!("failed to write state file {}: {}", path.display(), error))
+}
+
+fn write_file_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let temp_path = parent.join(format!(
+        ".{}.tmp.{}.{}",
+        file_name,
+        std::process::id(),
+        nonce
+    ));
+    {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+    }
+    match fs::rename(&temp_path, path) {
+        Ok(()) => {
+            sync_parent_dir(parent)?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(error)
+        }
+    }
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(parent: &Path) -> std::io::Result<()> {
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_parent: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn read_auth_session(path: &Path) -> Result<DesktopAuthSession, String> {
@@ -579,7 +623,7 @@ fn write_auth_session(path: &Path, session: &DesktopAuthSession) -> Result<(), S
         )
     })?;
     payload.push(b'\n');
-    fs::write(path, payload).map_err(|error| {
+    write_file_atomic(path, &payload).map_err(|error| {
         format!(
             "failed to write desktop auth session {}: {}",
             path.display(),
