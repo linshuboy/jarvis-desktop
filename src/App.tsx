@@ -14,6 +14,8 @@ import {
 
 import {
   bindCurrentRuntime,
+  checkDesktopClientUpdate,
+  downloadDesktopClientUpdate,
   getDesktopSnapshot,
   loginDesktop,
   logoutDesktop,
@@ -24,7 +26,8 @@ import {
   validateDesktopConfig,
 } from './bridge'
 import { createDesktopRuntimeProcessView } from './desktopStatusAdapter'
-import type { ConfigValidation, DesktopAuthState, DesktopSnapshot } from './types'
+import { releaseManifestUrl } from './clientUpdates'
+import type { ConfigValidation, DesktopAuthState, DesktopClientUpdateCheck, DesktopSnapshot } from './types'
 
 function formatTimestamp(value: string): string {
   if (!value) {
@@ -84,6 +87,10 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('')
   const [flash, setFlash] = useState('')
   const [error, setError] = useState('')
+  const [clientUpdate, setClientUpdate] = useState<DesktopClientUpdateCheck | null>(null)
+  const [clientUpdatePending, setClientUpdatePending] = useState(false)
+  const [clientUpdateMessage, setClientUpdateMessage] = useState('')
+  const [clientUpdateError, setClientUpdateError] = useState('')
   const [digitalHumanMode, setDigitalHumanMode] = useState(false)
   const [digitalHumanSessionActive, setDigitalHumanSessionActive] = useState(false)
   const [digitalHumanVisualState, setDigitalHumanVisualState] = useState<AvatarVisualState>(() =>
@@ -338,6 +345,35 @@ export default function App() {
       setError(describeError(nextError, '更新 App 自启状态失败'))
     } finally {
       setActionPending(false)
+    }
+  }
+
+  async function handleCheckClientUpdate() {
+    setClientUpdatePending(true)
+    setClientUpdateMessage('')
+    setClientUpdateError('')
+    try {
+      const result = await checkDesktopClientUpdate()
+      setClientUpdate(result)
+      setClientUpdateMessage(result.update_available ? `发现新版本 ${result.latest_version}` : '当前已是最新版本')
+    } catch (nextError) {
+      setClientUpdateError(describeError(nextError, '检查客户端更新失败'))
+    } finally {
+      setClientUpdatePending(false)
+    }
+  }
+
+  async function handleDownloadClientUpdate() {
+    setClientUpdatePending(true)
+    setClientUpdateMessage('')
+    setClientUpdateError('')
+    try {
+      const result = await downloadDesktopClientUpdate()
+      setClientUpdateMessage(`客户端安装包已下载到 ${result.download_path}`)
+    } catch (nextError) {
+      setClientUpdateError(describeError(nextError, '下载客户端安装包失败'))
+    } finally {
+      setClientUpdatePending(false)
     }
   }
 
@@ -598,6 +634,60 @@ export default function App() {
                 {snapshot.app_autostart.last_error ? <p className="flash flash-error">{snapshot.app_autostart.last_error}</p> : null}
               </>
             ) : null}
+          </article>
+
+          <article className="glass-card">
+            <div className="card-header">
+              <h2>客户端更新</h2>
+              <span className="micro-note">桌面端当前不执行静默安装；安装包会下载到系统默认下载文件夹。</span>
+            </div>
+            <dl className="detail-list">
+              <div>
+                <dt>当前版本</dt>
+                <dd>{clientUpdate?.current_version || snapshot?.version.version || 'unknown'}</dd>
+              </div>
+              <div>
+                <dt>最新版本</dt>
+                <dd>{clientUpdate?.latest_version || '尚未检查'}</dd>
+              </div>
+              <div>
+                <dt>更新状态</dt>
+                <dd>
+                  {clientUpdate
+                    ? clientUpdate.update_available
+                      ? '发现新版本'
+                      : '已是最新'
+                    : '未检查'}
+                </dd>
+              </div>
+              <div>
+                <dt>匹配安装包</dt>
+                <dd>{clientUpdate?.asset?.name || '未匹配'}</dd>
+              </div>
+              <div>
+                <dt>Manifest</dt>
+                <dd>{releaseManifestUrl()}</dd>
+              </div>
+              <div>
+                <dt>检查时间</dt>
+                <dd>{clientUpdate?.checked_at ? formatTimestamp(clientUpdate.checked_at) : '未检查'}</dd>
+              </div>
+            </dl>
+            <div className="button-row">
+              <button disabled={clientUpdatePending} onClick={() => void handleCheckClientUpdate()} type="button">
+                {clientUpdatePending ? '处理中…' : '手动检查更新'}
+              </button>
+              <button
+                className="button-muted"
+                disabled={clientUpdatePending || !clientUpdate?.asset}
+                onClick={() => void handleDownloadClientUpdate()}
+                type="button"
+              >
+                下载客户端文件
+              </button>
+            </div>
+            {clientUpdateMessage ? <p className="flash flash-success">{clientUpdateMessage}</p> : null}
+            {clientUpdateError ? <p className="flash flash-error">{clientUpdateError}</p> : null}
           </article>
 
           <article className="glass-card">

@@ -16,12 +16,15 @@ use reqwest::StatusCode;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Deserializer, Map, Value};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 const HELPER_MANAGEMENT_MODE: &str = "app-managed";
+const DEFAULT_RELEASE_MANIFEST_URL: &str =
+    "https://github.com/linshuboy/JARVISAI/releases/latest/download/release-manifest.json";
 
 #[derive(Clone)]
 struct HostdPaths {
@@ -69,6 +72,42 @@ struct AuthMeResponse {
 struct CreateBindingInviteResponse {
     invite_url: Option<String>,
     invite_code: Option<String>,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+struct ClientReleaseAsset {
+    name: String,
+    component: String,
+    platform: Option<String>,
+    arch: Option<String>,
+    kind: Option<String>,
+    url: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Default, Deserialize)]
+struct ClientReleaseClients {
+    #[serde(default)]
+    desktop: Vec<ClientReleaseAsset>,
+}
+
+#[derive(Default, Deserialize)]
+struct ClientReleaseInfo {
+    version: String,
+    channel: String,
+    #[serde(rename = "sourceRepository")]
+    source_repository: String,
+    #[serde(rename = "sourceSha")]
+    source_sha: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+}
+
+#[derive(Deserialize)]
+struct ClientReleaseManifest {
+    release: ClientReleaseInfo,
+    clients: ClientReleaseClients,
 }
 
 #[derive(Debug)]
@@ -180,6 +219,37 @@ fn command_error(bin: &Path, args: &[&str], stderr: &[u8]) -> String {
 
 fn stage_error(stage: &str, error: String) -> String {
     format!("{}：{}", stage, error)
+}
+
+fn now_iso() -> String {
+    let total_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    let days = (total_seconds / 86_400) as i64;
+    let seconds_of_day = total_seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hour, minute, second
+    )
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year, m as u32, d as u32)
 }
 
 fn unavailable_hostd_version(error: &str) -> Value {
@@ -991,6 +1061,256 @@ fn post_authenticated_json(
     }
 }
 
+fn normalize_manifest_url(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    let candidate = if trimmed.is_empty() {
+        DEFAULT_RELEASE_MANIFEST_URL
+    } else {
+        trimmed
+    };
+    let parsed = Url::parse(candidate)
+        .map_err(|error| format!("invalid release manifest url {}: {}", candidate, error))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(parsed.to_string()),
+        scheme => Err(format!(
+            "release manifest url scheme must be http or https, got {}",
+            scheme
+        )),
+    }
+}
+
+fn desktop_app_version(app: &AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+fn current_desktop_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
+fn current_desktop_arch() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86_64") {
+        "amd64"
+    } else {
+        std::env::consts::ARCH
+    }
+}
+
+fn preferred_desktop_kinds() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        &["dmg"]
+    } else if cfg!(target_os = "windows") {
+        &["exe", "msi"]
+    } else {
+        &["deb", "rpm"]
+    }
+}
+
+fn fetch_release_manifest(manifest_url: &str) -> Result<ClientReleaseManifest, String> {
+    let normalized = normalize_manifest_url(manifest_url)?;
+    let client = build_http_client()?;
+    let response = client
+        .get(normalized)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|error| format!("failed to fetch release manifest: {}", error))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("failed to read release manifest body: {}", error))?;
+    if !status.is_success() {
+        return Err(format!(
+            "release manifest request failed with status {}",
+            status.as_u16()
+        ));
+    }
+    serde_json::from_str::<ClientReleaseManifest>(&body)
+        .map_err(|error| format!("failed to decode release manifest: {}", error))
+}
+
+fn select_desktop_release_asset(manifest: &ClientReleaseManifest) -> Option<ClientReleaseAsset> {
+    let platform = current_desktop_platform();
+    let arch = current_desktop_arch();
+    let platform_assets = manifest
+        .clients
+        .desktop
+        .iter()
+        .filter(|asset| asset.platform.as_deref() == Some(platform))
+        .cloned()
+        .collect::<Vec<_>>();
+    let arch_assets = platform_assets
+        .iter()
+        .filter(|asset| asset.arch.as_deref().unwrap_or("") == arch)
+        .cloned()
+        .collect::<Vec<_>>();
+    let candidates = if arch_assets.is_empty() {
+        platform_assets
+    } else {
+        arch_assets
+    };
+    for kind in preferred_desktop_kinds() {
+        if let Some(asset) = candidates
+            .iter()
+            .find(|asset| asset.kind.as_deref() == Some(*kind))
+        {
+            return Some(asset.clone());
+        }
+    }
+    candidates.into_iter().next()
+}
+
+fn download_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(profile) = env::var("USERPROFILE") {
+            let trimmed = profile.trim();
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(trimmed).join("Downloads"));
+            }
+        }
+    }
+    let home = home_dir()?;
+    Ok(home.join("Downloads"))
+}
+
+fn safe_download_file_name(name: &str) -> String {
+    let sanitized = name
+        .chars()
+        .map(|value| match value {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => value,
+        })
+        .collect::<String>();
+    let trimmed = sanitized.trim().trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        String::from("client-update")
+    } else {
+        trimmed
+    }
+}
+
+fn unique_download_path(directory: &Path, name: &str) -> PathBuf {
+    let safe_name = safe_download_file_name(name);
+    let initial = directory.join(&safe_name);
+    if !initial.exists() {
+        return initial;
+    }
+    let path = Path::new(&safe_name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("client-update");
+    let extension = path.extension().and_then(|value| value.to_str());
+    for index in 1..1000 {
+        let candidate_name = match extension {
+            Some(value) if !value.is_empty() => format!("{}-{}.{}", stem, index, value),
+            _ => format!("{}-{}", stem, index),
+        };
+        let candidate = directory.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    directory.join(format!("{}-{}", safe_name, std::process::id()))
+}
+
+fn download_release_asset(asset: &ClientReleaseAsset) -> Result<(PathBuf, bool), String> {
+    let url = Url::parse(asset.url.trim())
+        .map_err(|error| format!("invalid release asset url {}: {}", asset.url, error))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(format!(
+                "release asset url scheme must be http or https, got {}",
+                scheme
+            ))
+        }
+    }
+    let directory = download_dir()?;
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "failed to create Downloads directory {}: {}",
+            directory.display(),
+            error
+        )
+    })?;
+    let target = unique_download_path(&directory, &asset.name);
+    let client = build_http_client()?;
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(|error| format!("failed to download client package: {}", error))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!(
+            "client package download failed with status {}",
+            status.as_u16()
+        ));
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|error| format!("failed to create {}: {}", target.display(), error))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(|error| format!("failed to read client package stream: {}", error))?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|error| format!("failed to write {}: {}", target.display(), error))?;
+        hasher.update(&buffer[..read]);
+    }
+    file.sync_all()
+        .map_err(|error| format!("failed to sync {}: {}", target.display(), error))?;
+    let actual = format!("{:x}", hasher.finalize());
+    let expected = asset.sha256.trim().to_lowercase();
+    if !expected.is_empty() && actual != expected {
+        let _ = fs::remove_file(&target);
+        return Err(format!(
+            "downloaded client package sha256 mismatch: expected {}, got {}",
+            expected, actual
+        ));
+    }
+    Ok((target, !expected.is_empty()))
+}
+
+fn build_update_check_payload(
+    app: &AppHandle,
+    manifest_url: &str,
+    manifest: &ClientReleaseManifest,
+) -> Value {
+    let current_version = desktop_app_version(app);
+    let latest_version = manifest.release.version.clone();
+    let asset = select_desktop_release_asset(manifest);
+    json!({
+        "manifest_url": manifest_url,
+        "current_version": current_version,
+        "latest_version": latest_version,
+        "update_available": !latest_version.is_empty() && latest_version != current_version,
+        "checked_at": now_iso(),
+        "asset": asset,
+        "all_assets": manifest.clients.desktop.clone(),
+        "release": {
+            "channel": manifest.release.channel.clone(),
+            "source_repository": manifest.release.source_repository.clone(),
+            "source_sha": manifest.release.source_sha.clone(),
+            "created_at": manifest.release.created_at.clone(),
+        },
+    })
+}
+
 fn clear_auth_credentials(session: &mut DesktopAuthSession) {
     session.access_token = None;
     session.refresh_token = None;
@@ -1733,6 +2053,38 @@ pub fn desktop_set_app_autostart(app: AppHandle, enabled: bool) -> Result<Value,
     sync_tray_autostart_state(&app, status.enabled);
     serde_json::to_value(status)
         .map_err(|error| format!("failed to encode desktop autostart update: {}", error))
+}
+
+#[tauri::command]
+pub fn desktop_check_client_update(app: AppHandle, manifest_url: String) -> Result<Value, String> {
+    let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
+    let manifest = fetch_release_manifest(&normalized_manifest_url)?;
+    Ok(build_update_check_payload(
+        &app,
+        &normalized_manifest_url,
+        &manifest,
+    ))
+}
+
+#[tauri::command]
+pub fn desktop_download_client_update(
+    app: AppHandle,
+    manifest_url: String,
+) -> Result<Value, String> {
+    let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
+    let manifest = fetch_release_manifest(&normalized_manifest_url)?;
+    let asset = select_desktop_release_asset(&manifest)
+        .ok_or_else(|| String::from("当前平台没有可下载的桌面客户端包"))?;
+    let (download_path, sha256_verified) = download_release_asset(&asset)?;
+    Ok(json!({
+        "manifest_url": normalized_manifest_url,
+        "release_version": manifest.release.version,
+        "asset": asset,
+        "download_path": download_path.display().to_string(),
+        "sha256_verified": sha256_verified,
+        "downloaded_at": now_iso(),
+        "current_version": desktop_app_version(&app),
+    }))
 }
 
 #[tauri::command]

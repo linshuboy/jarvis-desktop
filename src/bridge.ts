@@ -1,5 +1,7 @@
 import type {
   AppAutostartStatus,
+  DesktopClientUpdateCheck,
+  DesktopClientUpdateDownload,
   ConfigValidation,
   DesktopAuthState,
   DesktopLoginResult,
@@ -7,6 +9,7 @@ import type {
   HelperManagementStatus,
   PairStatus,
 } from './types'
+import { releaseManifestUrl, selectPreferredDesktopAsset } from './clientUpdates'
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
@@ -324,6 +327,42 @@ export async function setDesktopAutostart(enabled: boolean): Promise<AppAutostar
     return { ...mockAutostartStatus }
   }
   return invoke<AppAutostartStatus>('desktop_set_app_autostart', { enabled })
+}
+
+export async function checkDesktopClientUpdate(): Promise<DesktopClientUpdateCheck> {
+  const manifestUrl = releaseManifestUrl()
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    const response = await fetch(manifestUrl, { headers: { Accept: 'application/json' } })
+    if (!response.ok) {
+      throw new Error(`检查更新失败：${response.status} ${response.statusText}`.trim())
+    }
+    const manifest = await response.json()
+    const asset = selectPreferredDesktopAsset(manifest)
+    return {
+      manifest_url: manifestUrl,
+      current_version: '0.1.6',
+      latest_version: String(manifest.release?.version || ''),
+      update_available: String(manifest.release?.version || '') !== '0.1.6',
+      checked_at: new Date().toISOString(),
+      asset,
+      all_assets: Array.isArray(manifest.clients?.desktop) ? manifest.clients.desktop : [],
+    }
+  }
+  return invoke<DesktopClientUpdateCheck>('desktop_check_client_update', { manifestUrl })
+}
+
+export async function downloadDesktopClientUpdate(): Promise<DesktopClientUpdateDownload> {
+  const manifestUrl = releaseManifestUrl()
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    const check = await checkDesktopClientUpdate()
+    if (!check.asset) {
+      throw new Error('当前平台没有可下载的桌面客户端包')
+    }
+    throw new Error(`浏览器预览模式不支持写入 Downloads，请打开 ${check.asset.url}`)
+  }
+  return invoke<DesktopClientUpdateDownload>('desktop_download_client_update', { manifestUrl })
 }
 
 export async function quitDesktopApplication(): Promise<void> {

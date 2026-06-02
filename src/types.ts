@@ -92,6 +92,52 @@ export type AppAutostartStatus = {
   last_error?: string
 }
 
+export type ClientReleaseAsset = {
+  name: string
+  component: 'hostd' | 'desktop' | 'mobile' | 'unknown'
+  platform: string | null
+  arch: string | null
+  kind: string | null
+  url: string
+  sha256: string
+  size: number
+}
+
+export type ClientReleaseManifest = {
+  schemaVersion: number
+  release: {
+    version: string
+    channel: string
+    sourceRepository: string
+    sourceSha: string
+    createdAt: string
+  }
+  clients: {
+    hostd: ClientReleaseAsset[]
+    desktop: ClientReleaseAsset[]
+    mobile: ClientReleaseAsset[]
+  }
+}
+
+export type DesktopClientUpdateCheck = {
+  manifest_url: string
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  checked_at: string
+  asset: ClientReleaseAsset | null
+  all_assets: ClientReleaseAsset[]
+}
+
+export type DesktopClientUpdateDownload = {
+  manifest_url: string
+  release_version: string
+  asset: ClientReleaseAsset
+  download_path: string
+  sha256_verified: boolean
+  downloaded_at: string
+}
+
 export type DesktopSnapshot = {
   bridge: string
   hostd_bin_path: string

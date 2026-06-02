@@ -216,6 +216,8 @@ fn main() {
             commands::desktop_sync_auth_state,
             commands::desktop_logout,
             commands::desktop_set_app_autostart,
+            commands::desktop_check_client_update,
+            commands::desktop_download_client_update,
             commands::desktop_quit_application
         ])
         .build(tauri::generate_context!())
