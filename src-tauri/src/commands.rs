@@ -15,7 +15,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::StatusCode;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Deserializer, Map, Value};
 use tauri::{AppHandle, Manager};
 
 #[cfg(unix)]
@@ -517,8 +517,17 @@ fn read_state_file(path: &Path) -> Result<PersistedState, String> {
             ))
         }
     };
-    serde_json::from_slice::<PersistedState>(&content)
-        .map_err(|error| format!("failed to decode state file {}: {}", path.display(), error))
+    let mut deserializer = Deserializer::from_slice(&content);
+    let state = PersistedState::deserialize(&mut deserializer)
+        .map_err(|error| format!("failed to decode state file {}: {}", path.display(), error))?;
+    if String::from_utf8_lossy(&content[deserializer.byte_offset()..])
+        .trim()
+        .is_empty()
+    {
+        return Ok(state);
+    }
+    write_state_file(path, &state)?;
+    Ok(state)
 }
 
 fn write_state_file(path: &Path, state: &PersistedState) -> Result<(), String> {
@@ -1736,7 +1745,12 @@ pub fn desktop_quit_application(app: AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{api_url, normalize_server_url, should_request_helper_reconnect, SocketSnapshot};
+    use super::{
+        api_url, normalize_server_url, read_state_file, should_request_helper_reconnect,
+        SocketSnapshot,
+    };
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn normalize_server_url_accepts_plain_hostname() {
@@ -1788,5 +1802,39 @@ mod tests {
             ..SocketSnapshot::default()
         };
         assert!(!should_request_helper_reconnect(&unpaired));
+    }
+
+    #[test]
+    fn read_state_file_repairs_trailing_garbage() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "sunvisai-desktop-state-test-{}-{}",
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("state.json");
+        let corrupt = r#"{
+  "runtime_id": "runtime-1",
+  "runtime_token": "runtime-token-1",
+  "pairing_state": "paired",
+  "last_gateway_url": "wss://example.test/ws/node",
+  "last_connected_at": "2026-06-01T08:21:19Z"
+}
+ "last_error": "EOF"
+}"#;
+        fs::write(&path, corrupt).expect("write corrupt state");
+        let state = read_state_file(&path).expect("read repaired state");
+        assert_eq!(state.runtime_id.as_deref(), Some("runtime-1"));
+        assert_eq!(state.runtime_token.as_deref(), Some("runtime-token-1"));
+        assert_eq!(state.pairing_state.as_deref(), Some("paired"));
+
+        let repaired = fs::read_to_string(&path).expect("read rewritten state");
+        serde_json::from_str::<serde_json::Value>(&repaired).expect("valid rewritten json");
+        assert!(!repaired.contains("\"last_error\": \"EOF\""));
+        let _ = fs::remove_dir_all(dir);
     }
 }
