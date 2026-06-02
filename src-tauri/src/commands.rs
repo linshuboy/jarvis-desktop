@@ -517,12 +517,21 @@ fn read_state_file(path: &Path) -> Result<PersistedState, String> {
             ))
         }
     };
-    let mut deserializer = Deserializer::from_slice(&content);
-    let state = PersistedState::deserialize(&mut deserializer)
-        .map_err(|error| format!("failed to decode state file {}: {}", path.display(), error))?;
-    if String::from_utf8_lossy(&content[deserializer.byte_offset()..])
-        .trim()
-        .is_empty()
+    let mut stream = Deserializer::from_slice(&content).into_iter::<PersistedState>();
+    let state = match stream.next() {
+        Some(Ok(value)) => value,
+        Some(Err(error)) => {
+            return Err(format!(
+                "failed to decode state file {}: {}",
+                path.display(),
+                error
+            ))
+        }
+        None => PersistedState::default(),
+    };
+    if content[stream.byte_offset()..]
+        .iter()
+        .all(|byte| byte.is_ascii_whitespace())
     {
         return Ok(state);
     }
