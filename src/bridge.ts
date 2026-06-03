@@ -96,7 +96,7 @@ async function resolveInvoke(): Promise<TauriInvoke | null> {
 function buildMockSnapshot(): DesktopSnapshot {
   return {
     bridge: mockStatus.bridge_mode,
-    app_version: '0.1.7',
+    app_version: '0.1.8',
     hostd_bin_path: '~/Library/Application Support/Sunvisai Desktop/hostd/macos-aarch64/hostd',
     app_close_action: 'hide',
     app_background_launch: false,
@@ -342,9 +342,9 @@ export async function checkDesktopClientUpdate(): Promise<DesktopClientUpdateChe
     const asset = selectPreferredDesktopAsset(manifest)
     return {
       manifest_url: manifestUrl,
-      current_version: '0.1.7',
+      current_version: '0.1.8',
       latest_version: String(manifest.release?.version || ''),
-      update_available: String(manifest.release?.version || '') !== '0.1.7',
+      update_available: String(manifest.release?.version || '') !== '0.1.8',
       checked_at: new Date().toISOString(),
       asset,
       all_assets: Array.isArray(manifest.clients?.desktop) ? manifest.clients.desktop : [],
