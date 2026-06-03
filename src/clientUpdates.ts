@@ -1,7 +1,7 @@
 import type { ClientReleaseAsset, ClientReleaseManifest } from './types'
 
 const DEFAULT_RELEASE_MANIFEST_URL =
-  'https://github.com/linshuboy/JARVISAI/releases/latest/download/release-manifest.json'
+  'https://github.com/linshuboy/jarvisai-releases/releases/latest/download/release-manifest.json'
 const UPDATE_PROXY_STORAGE_KEY = 'agi.desktop.client_update_proxy_url'
 
 export function releaseManifestUrl(): string {

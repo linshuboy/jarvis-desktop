@@ -25,7 +25,7 @@ use std::os::unix::net::UnixStream;
 
 const HELPER_MANAGEMENT_MODE: &str = "app-managed";
 const DEFAULT_RELEASE_MANIFEST_URL: &str =
-    "https://github.com/linshuboy/JARVISAI/releases/latest/download/release-manifest.json";
+    "https://github.com/linshuboy/jarvisai-releases/releases/latest/download/release-manifest.json";
 
 #[derive(Clone)]
 struct HostdPaths {
@@ -99,6 +99,8 @@ struct ClientReleaseInfo {
     channel: String,
     #[serde(rename = "sourceRepository")]
     source_repository: String,
+    #[serde(rename = "distributionRepository")]
+    distribution_repository: Option<String>,
     #[serde(rename = "sourceSha")]
     source_sha: String,
     #[serde(rename = "createdAt")]
@@ -1410,6 +1412,7 @@ fn build_update_check_payload(
         "release": {
             "channel": manifest.release.channel.clone(),
             "source_repository": manifest.release.source_repository.clone(),
+            "distribution_repository": manifest.release.distribution_repository.clone(),
             "source_sha": manifest.release.source_sha.clone(),
             "created_at": manifest.release.created_at.clone(),
         },

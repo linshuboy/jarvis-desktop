@@ -81,6 +81,7 @@ jobs:
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
           echo "source_repository=${SOURCE_REPOSITORY}" >>"$GITHUB_OUTPUT"
           echo "source_ref=${SOURCE_SHA:-main}" >>"$GITHUB_OUTPUT"
+          echo "source_sha=${SOURCE_SHA:-$GITHUB_SHA}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -152,6 +153,9 @@ jobs:
             exit 1
           fi
       - name: Build Linux desktop bundles
+        env:
+          RELEASE_TAG: ${{ steps.settings.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.settings.outputs.source_sha }}
         run: |
           npm run build
           npm run build:icons
@@ -235,6 +239,7 @@ jobs:
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
           echo "source_repository=${SOURCE_REPOSITORY}" >>"$GITHUB_OUTPUT"
           echo "source_ref=${SOURCE_SHA:-main}" >>"$GITHUB_OUTPUT"
+          echo "source_sha=${SOURCE_SHA:-$GITHUB_SHA}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -288,6 +293,9 @@ jobs:
             exit 1
           fi
       - name: Build Windows desktop bundles
+        env:
+          RELEASE_TAG: ${{ steps.settings.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.settings.outputs.source_sha }}
         run: |
           npm run build
           npm run build:icons
@@ -382,6 +390,7 @@ jobs:
           echo "main_repository=${MAIN_REPOSITORY:-}" >>"$GITHUB_OUTPUT"
           echo "source_repository=${SOURCE_REPOSITORY}" >>"$GITHUB_OUTPUT"
           echo "source_ref=${SOURCE_SHA:-main}" >>"$GITHUB_OUTPUT"
+          echo "source_sha=${SOURCE_SHA:-$GITHUB_SHA}" >>"$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >>"$GITHUB_OUTPUT"
           echo "should_publish=${should_publish}" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -437,6 +446,9 @@ jobs:
             exit 1
           fi
       - name: Build macOS desktop bundles
+        env:
+          RELEASE_TAG: ${{ steps.settings.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.settings.outputs.source_sha }}
         run: |
           npm run build
           npm run build:icons
