@@ -121,6 +121,7 @@ export type ClientReleaseManifest = {
 
 export type DesktopClientUpdateCheck = {
   manifest_url: string
+  proxy_url?: string
   current_version: string
   latest_version: string
   update_available: boolean
@@ -131,6 +132,7 @@ export type DesktopClientUpdateCheck = {
 
 export type DesktopClientUpdateDownload = {
   manifest_url: string
+  proxy_url?: string
   release_version: string
   asset: ClientReleaseAsset
   download_path: string

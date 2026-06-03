@@ -26,7 +26,7 @@ import {
   validateDesktopConfig,
 } from './bridge'
 import { createDesktopRuntimeProcessView } from './desktopStatusAdapter'
-import { releaseManifestUrl } from './clientUpdates'
+import { readStoredUpdateProxyUrl, releaseManifestUrl, writeStoredUpdateProxyUrl } from './clientUpdates'
 import type { ConfigValidation, DesktopAuthState, DesktopClientUpdateCheck, DesktopSnapshot } from './types'
 
 function formatTimestamp(value: string): string {
@@ -91,6 +91,7 @@ export default function App() {
   const [clientUpdatePending, setClientUpdatePending] = useState(false)
   const [clientUpdateMessage, setClientUpdateMessage] = useState('')
   const [clientUpdateError, setClientUpdateError] = useState('')
+  const [clientUpdateProxyInput, setClientUpdateProxyInput] = useState(() => readStoredUpdateProxyUrl())
   const [digitalHumanMode, setDigitalHumanMode] = useState(false)
   const [digitalHumanSessionActive, setDigitalHumanSessionActive] = useState(false)
   const [digitalHumanVisualState, setDigitalHumanVisualState] = useState<AvatarVisualState>(() =>
@@ -349,11 +350,13 @@ export default function App() {
   }
 
   async function handleCheckClientUpdate() {
+    const proxyUrl = clientUpdateProxyInput.trim()
+    writeStoredUpdateProxyUrl(proxyUrl)
     setClientUpdatePending(true)
     setClientUpdateMessage('')
     setClientUpdateError('')
     try {
-      const result = await checkDesktopClientUpdate()
+      const result = await checkDesktopClientUpdate(proxyUrl)
       setClientUpdate(result)
       setClientUpdateMessage(result.update_available ? `发现新版本 ${result.latest_version}` : '当前已是最新版本')
     } catch (nextError) {
@@ -364,11 +367,13 @@ export default function App() {
   }
 
   async function handleDownloadClientUpdate() {
+    const proxyUrl = clientUpdateProxyInput.trim()
+    writeStoredUpdateProxyUrl(proxyUrl)
     setClientUpdatePending(true)
     setClientUpdateMessage('')
     setClientUpdateError('')
     try {
-      const result = await downloadDesktopClientUpdate()
+      const result = await downloadDesktopClientUpdate(proxyUrl)
       setClientUpdateMessage(`客户端安装包已下载到 ${result.download_path}`)
     } catch (nextError) {
       setClientUpdateError(describeError(nextError, '下载客户端安装包失败'))
@@ -643,8 +648,17 @@ export default function App() {
           <article className="glass-card">
             <div className="card-header">
               <h2>客户端更新</h2>
-              <span className="micro-note">桌面端当前不执行静默安装；安装包会下载到系统默认下载文件夹。</span>
+              <span className="micro-note">桌面端当前不执行静默安装；安装包会下载到系统默认下载文件夹。GitHub 慢时可配置更新专用代理。</span>
             </div>
+            <label className="field">
+              <span>更新代理 URL</span>
+              <input
+                onChange={(event) => setClientUpdateProxyInput(event.target.value)}
+                placeholder="http://127.0.0.1:7897 或 https://gh-proxy.example/{url}"
+                type="url"
+                value={clientUpdateProxyInput}
+              />
+            </label>
             <dl className="detail-list">
               <div>
                 <dt>客户端当前版本</dt>
@@ -679,6 +693,10 @@ export default function App() {
               <div>
                 <dt>Manifest</dt>
                 <dd>{releaseManifestUrl()}</dd>
+              </div>
+              <div>
+                <dt>更新代理</dt>
+                <dd>{clientUpdateProxyInput.trim() || '未配置'}</dd>
               </div>
               <div>
                 <dt>检查时间</dt>

@@ -96,7 +96,7 @@ async function resolveInvoke(): Promise<TauriInvoke | null> {
 function buildMockSnapshot(): DesktopSnapshot {
   return {
     bridge: mockStatus.bridge_mode,
-    app_version: '0.1.8',
+    app_version: '0.1.9',
     hostd_bin_path: '~/Library/Application Support/Sunvisai Desktop/hostd/macos-aarch64/hostd',
     app_close_action: 'hide',
     app_background_launch: false,
@@ -330,11 +330,22 @@ export async function setDesktopAutostart(enabled: boolean): Promise<AppAutostar
   return invoke<AppAutostartStatus>('desktop_set_app_autostart', { enabled })
 }
 
-export async function checkDesktopClientUpdate(): Promise<DesktopClientUpdateCheck> {
+function proxyFetchUrl(url: string, proxyUrl: string): string {
+  const trimmed = proxyUrl.trim()
+  if (!trimmed) {
+    return url
+  }
+  if (trimmed.includes('{url}')) {
+    return trimmed.split('{url}').join(encodeURIComponent(url))
+  }
+  return `${trimmed.replace(/\/+$/, '')}/${url}`
+}
+
+export async function checkDesktopClientUpdate(proxyUrl = ''): Promise<DesktopClientUpdateCheck> {
   const manifestUrl = releaseManifestUrl()
   const invoke = await resolveInvoke()
   if (invoke === null) {
-    const response = await fetch(manifestUrl, { headers: { Accept: 'application/json' } })
+    const response = await fetch(proxyFetchUrl(manifestUrl, proxyUrl), { headers: { Accept: 'application/json' } })
     if (!response.ok) {
       throw new Error(`检查更新失败：${response.status} ${response.statusText}`.trim())
     }
@@ -342,28 +353,29 @@ export async function checkDesktopClientUpdate(): Promise<DesktopClientUpdateChe
     const asset = selectPreferredDesktopAsset(manifest)
     return {
       manifest_url: manifestUrl,
-      current_version: '0.1.8',
+      proxy_url: proxyUrl.trim() || undefined,
+      current_version: '0.1.9',
       latest_version: String(manifest.release?.version || ''),
-      update_available: String(manifest.release?.version || '') !== '0.1.8',
+      update_available: String(manifest.release?.version || '') !== '0.1.9',
       checked_at: new Date().toISOString(),
       asset,
       all_assets: Array.isArray(manifest.clients?.desktop) ? manifest.clients.desktop : [],
     }
   }
-  return invoke<DesktopClientUpdateCheck>('desktop_check_client_update', { manifestUrl })
+  return invoke<DesktopClientUpdateCheck>('desktop_check_client_update', { manifestUrl, proxyUrl })
 }
 
-export async function downloadDesktopClientUpdate(): Promise<DesktopClientUpdateDownload> {
+export async function downloadDesktopClientUpdate(proxyUrl = ''): Promise<DesktopClientUpdateDownload> {
   const manifestUrl = releaseManifestUrl()
   const invoke = await resolveInvoke()
   if (invoke === null) {
-    const check = await checkDesktopClientUpdate()
+    const check = await checkDesktopClientUpdate(proxyUrl)
     if (!check.asset) {
       throw new Error('当前平台没有可下载的桌面客户端包')
     }
-    throw new Error(`浏览器预览模式不支持写入 Downloads，请打开 ${check.asset.url}`)
+    throw new Error(`浏览器预览模式不支持写入 Downloads，请打开 ${proxyFetchUrl(check.asset.url, proxyUrl)}`)
   }
-  return invoke<DesktopClientUpdateDownload>('desktop_download_client_update', { manifestUrl })
+  return invoke<DesktopClientUpdateDownload>('desktop_download_client_update', { manifestUrl, proxyUrl })
 }
 
 export async function quitDesktopApplication(): Promise<void> {

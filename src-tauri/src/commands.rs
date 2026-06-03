@@ -10,8 +10,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::{Client, ClientBuilder, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::Proxy;
 use reqwest::StatusCode;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -886,10 +887,94 @@ fn api_url(server_url: &str, path: &str) -> Result<Url, String> {
 }
 
 fn build_http_client() -> Result<Client, String> {
-    Client::builder()
+    build_http_client_with_proxy("")
+}
+
+fn build_http_client_with_proxy(proxy_url: &str) -> Result<Client, String> {
+    let mut builder = Client::builder()
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(10));
+    if let Some(proxy) = http_proxy(proxy_url)? {
+        builder = apply_http_proxy(builder, proxy)?;
+    }
+    builder
         .build()
         .map_err(|error| format!("failed to build desktop HTTP client: {}", error))
+}
+
+fn apply_http_proxy(builder: ClientBuilder, proxy_url: String) -> Result<ClientBuilder, String> {
+    match Proxy::all(proxy_url.as_str()) {
+        Ok(proxy) => Ok(builder.proxy(proxy)),
+        Err(error) => Err(format!("invalid update proxy url {}: {}", proxy_url, error)),
+    }
+}
+
+fn http_proxy(proxy_url: &str) -> Result<Option<String>, String> {
+    let trimmed = proxy_url.trim();
+    if trimmed.is_empty() || trimmed.contains("{url}") {
+        return Ok(None);
+    }
+    let parsed = Url::parse(trimmed)
+        .map_err(|error| format!("invalid update proxy url {}: {}", trimmed, error))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(Some(parsed.to_string())),
+        scheme => Err(format!(
+            "update proxy url scheme must be http or https, got {}",
+            scheme
+        )),
+    }
+}
+
+fn normalize_update_proxy_url(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    if trimmed.contains("{url}") {
+        let sample = trimmed.replace("{url}", "https%3A%2F%2Fexample.com%2Ffile");
+        let parsed = Url::parse(&sample)
+            .map_err(|error| format!("invalid update proxy url template {}: {}", trimmed, error))?;
+        return match parsed.scheme() {
+            "http" | "https" => Ok(trimmed.to_string()),
+            scheme => Err(format!(
+                "update proxy url template scheme must be http or https, got {}",
+                scheme
+            )),
+        };
+    }
+    let parsed = Url::parse(trimmed)
+        .map_err(|error| format!("invalid update proxy url {}: {}", trimmed, error))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(parsed.to_string()),
+        scheme => Err(format!(
+            "update proxy url scheme must be http or https, got {}",
+            scheme
+        )),
+    }
+}
+
+fn proxied_url(url: &str, proxy_url: &str) -> Result<Url, String> {
+    let normalized_url =
+        Url::parse(url).map_err(|error| format!("invalid update url {}: {}", url, error))?;
+    let proxy = normalize_update_proxy_url(proxy_url)?;
+    if proxy.is_empty() || !proxy.contains("{url}") {
+        return Ok(normalized_url);
+    }
+    Url::parse(&proxy.replace("{url}", &percent_encode(normalized_url.as_str())))
+        .map_err(|error| format!("invalid proxied update url: {}", error))
+}
+
+fn percent_encode(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (*byte as char).to_string()
+            }
+            _ => format!("%{:02X}", byte),
+        })
+        .collect::<String>()
 }
 
 fn parse_api_response(response: Response) -> Result<Value, ApiError> {
@@ -1123,11 +1208,16 @@ fn preferred_desktop_kinds() -> &'static [&'static str] {
     }
 }
 
-fn fetch_release_manifest(manifest_url: &str) -> Result<ClientReleaseManifest, String> {
+fn fetch_release_manifest(
+    manifest_url: &str,
+    proxy_url: &str,
+) -> Result<ClientReleaseManifest, String> {
     let normalized = normalize_manifest_url(manifest_url)?;
-    let client = build_http_client()?;
+    let proxy = normalize_update_proxy_url(proxy_url)?;
+    let client = build_http_client_with_proxy(&proxy)?;
+    let request_url = proxied_url(&normalized, &proxy)?;
     let response = client
-        .get(normalized)
+        .get(request_url)
         .header("Accept", "application/json")
         .send()
         .map_err(|error| format!("failed to fetch release manifest: {}", error))?;
@@ -1231,9 +1321,12 @@ fn unique_download_path(directory: &Path, name: &str) -> PathBuf {
     directory.join(format!("{}-{}", safe_name, std::process::id()))
 }
 
-fn download_release_asset(asset: &ClientReleaseAsset) -> Result<(PathBuf, bool), String> {
-    let url = Url::parse(asset.url.trim())
-        .map_err(|error| format!("invalid release asset url {}: {}", asset.url, error))?;
+fn download_release_asset(
+    asset: &ClientReleaseAsset,
+    proxy_url: &str,
+) -> Result<(PathBuf, bool), String> {
+    let proxy = normalize_update_proxy_url(proxy_url)?;
+    let url = proxied_url(asset.url.trim(), &proxy)?;
     match url.scheme() {
         "http" | "https" => {}
         scheme => {
@@ -1252,7 +1345,7 @@ fn download_release_asset(asset: &ClientReleaseAsset) -> Result<(PathBuf, bool),
         )
     })?;
     let target = unique_download_path(&directory, &asset.name);
-    let client = build_http_client()?;
+    let client = build_http_client_with_proxy(&proxy)?;
     let mut response = client
         .get(url)
         .send()
@@ -1299,6 +1392,7 @@ fn download_release_asset(asset: &ClientReleaseAsset) -> Result<(PathBuf, bool),
 fn build_update_check_payload(
     app: &AppHandle,
     manifest_url: &str,
+    proxy_url: &str,
     manifest: &ClientReleaseManifest,
 ) -> Value {
     let current_version = desktop_app_version(app);
@@ -1306,6 +1400,7 @@ fn build_update_check_payload(
     let asset = select_desktop_release_asset(manifest);
     json!({
         "manifest_url": manifest_url,
+        "proxy_url": empty_to_none(proxy_url),
         "current_version": current_version,
         "latest_version": latest_version,
         "update_available": !latest_version.is_empty() && latest_version != current_version,
@@ -1319,6 +1414,15 @@ fn build_update_check_payload(
             "created_at": manifest.release.created_at.clone(),
         },
     })
+}
+
+fn empty_to_none(value: &str) -> Value {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Value::Null
+    } else {
+        Value::String(trimmed.to_string())
+    }
 }
 
 fn clear_auth_credentials(session: &mut DesktopAuthSession) {
@@ -2067,12 +2171,18 @@ pub fn desktop_set_app_autostart(app: AppHandle, enabled: bool) -> Result<Value,
 }
 
 #[tauri::command]
-pub fn desktop_check_client_update(app: AppHandle, manifest_url: String) -> Result<Value, String> {
+pub fn desktop_check_client_update(
+    app: AppHandle,
+    manifest_url: String,
+    proxy_url: String,
+) -> Result<Value, String> {
     let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
-    let manifest = fetch_release_manifest(&normalized_manifest_url)?;
+    let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
+    let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
     Ok(build_update_check_payload(
         &app,
         &normalized_manifest_url,
+        &normalized_proxy_url,
         &manifest,
     ))
 }
@@ -2081,14 +2191,17 @@ pub fn desktop_check_client_update(app: AppHandle, manifest_url: String) -> Resu
 pub fn desktop_download_client_update(
     app: AppHandle,
     manifest_url: String,
+    proxy_url: String,
 ) -> Result<Value, String> {
     let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
-    let manifest = fetch_release_manifest(&normalized_manifest_url)?;
+    let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
+    let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
     let asset = select_desktop_release_asset(&manifest)
         .ok_or_else(|| String::from("当前平台没有可下载的桌面客户端包"))?;
-    let (download_path, sha256_verified) = download_release_asset(&asset)?;
+    let (download_path, sha256_verified) = download_release_asset(&asset, &normalized_proxy_url)?;
     Ok(json!({
         "manifest_url": normalized_manifest_url,
+        "proxy_url": empty_to_none(&normalized_proxy_url),
         "release_version": manifest.release.version,
         "asset": asset,
         "download_path": download_path.display().to_string(),
