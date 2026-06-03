@@ -1080,7 +1080,17 @@ fn normalize_manifest_url(value: &str) -> Result<String, String> {
 }
 
 fn desktop_app_version(app: &AppHandle) -> String {
-    app.package_info().version.to_string()
+    serde_json::from_str::<Value>(include_str!("../tauri.conf.json"))
+        .ok()
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| app.package_info().version.to_string())
 }
 
 fn current_desktop_platform() -> &'static str {
@@ -1928,6 +1938,7 @@ pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
     };
     Ok(json!({
         "bridge": "tauri-hostd-ipc",
+        "app_version": desktop_app_version(&app),
         "hostd_bin_path": resolved_hostd_bin.display().to_string(),
         "app_close_action": autostart::close_action(),
         "app_background_launch": autostart::background_launch_requested(),

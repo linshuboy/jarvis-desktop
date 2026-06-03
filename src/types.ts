@@ -140,6 +140,7 @@ export type DesktopClientUpdateDownload = {
 
 export type DesktopSnapshot = {
   bridge: string
+  app_version: string
   hostd_bin_path: string
   app_close_action: string
   app_background_launch: boolean

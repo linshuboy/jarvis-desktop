@@ -22,6 +22,7 @@ const config = {
 
 const snapshot = {
   bridge: 'tauri',
+  app_version: '0.1.7',
   hostd_bin_path: '/tmp/hostd',
   app_close_action: 'hide',
   app_background_launch: true,

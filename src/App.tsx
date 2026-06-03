@@ -591,6 +591,10 @@ export default function App() {
               <>
                 <dl className="detail-list">
                   <div>
+                    <dt>App Version</dt>
+                    <dd>{snapshot.app_version || 'unknown'}</dd>
+                  </div>
+                  <div>
                     <dt>Close Action</dt>
                     <dd>{snapshot.app_close_action}</dd>
                   </div>
@@ -643,12 +647,20 @@ export default function App() {
             </div>
             <dl className="detail-list">
               <div>
-                <dt>当前版本</dt>
-                <dd>{clientUpdate?.current_version || snapshot?.version.version || 'unknown'}</dd>
+                <dt>客户端当前版本</dt>
+                <dd>{clientUpdate?.current_version || snapshot?.app_version || 'unknown'}</dd>
               </div>
               <div>
-                <dt>最新版本</dt>
+                <dt>客户端最新版本</dt>
                 <dd>{clientUpdate?.latest_version || '尚未检查'}</dd>
+              </div>
+              <div>
+                <dt>Hostd 当前版本</dt>
+                <dd>{snapshot?.version.version || 'unknown'}</dd>
+              </div>
+              <div>
+                <dt>Hostd Commit</dt>
+                <dd>{snapshot?.version.commit || 'unknown'}</dd>
               </div>
               <div>
                 <dt>更新状态</dt>
