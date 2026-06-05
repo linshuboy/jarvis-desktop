@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::env;
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
@@ -11,7 +13,16 @@ const MACOS_AUTOSTART_LABEL: &str = "ai.sunvisai.desktop.autostart";
 const WINDOWS_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(target_os = "windows")]
 const WINDOWS_RUN_VALUE: &str = "SunvisaiDesktop";
+#[cfg(target_os = "windows")]
+const WINDOWS_CREATE_NO_WINDOW: u32 = 0x08000000;
 const LINUX_AUTOSTART_FILE: &str = "ai.sunvisai.desktop.desktop";
+
+#[cfg(target_os = "windows")]
+fn hidden_windows_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    command
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppAutostartStatus {
@@ -160,7 +171,7 @@ fn render_macos_launch_agent(executable_path: &Path) -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 fn platform_status(executable_path: &Path) -> Result<AppAutostartStatus, String> {
-    let output = Command::new("reg")
+    let output = hidden_windows_command("reg")
         .args(["query", WINDOWS_RUN_KEY, "/v", WINDOWS_RUN_VALUE])
         .output()
         .map_err(|error| format!("failed to query Windows autostart registry: {}", error))?;
@@ -192,7 +203,7 @@ fn platform_status(executable_path: &Path) -> Result<AppAutostartStatus, String>
 fn platform_set_enabled(executable_path: &Path, enabled: bool) -> Result<(), String> {
     if enabled {
         let command = format!(r#""{}" --background"#, executable_path.display());
-        let output = Command::new("reg")
+        let output = hidden_windows_command("reg")
             .args([
                 "add",
                 WINDOWS_RUN_KEY,
@@ -213,7 +224,7 @@ fn platform_set_enabled(executable_path: &Path, enabled: bool) -> Result<(), Str
             ));
         }
     } else {
-        let output = Command::new("reg")
+        let output = hidden_windows_command("reg")
             .args(["delete", WINDOWS_RUN_KEY, "/v", WINDOWS_RUN_VALUE, "/f"])
             .output()
             .map_err(|error| format!("failed to disable Windows autostart: {}", error))?;

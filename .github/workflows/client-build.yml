@@ -300,13 +300,14 @@ jobs:
           npm run build
           npm run build:icons
           npm run build:hostd
-          npx tauri build --bundles nsis
+          npx tauri build --bundles nsis,msi
       - name: Stage Windows desktop assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-assets
           find src-tauri/target/release/bundle/nsis -name '*.exe' -exec cp {} release-assets/ \;
+          find src-tauri/target/release/bundle/msi -name '*.msi' -exec cp {} release-assets/ \;
           test "$(find release-assets -type f | wc -l)" -gt 0
       - uses: actions/upload-artifact@v4
         with:

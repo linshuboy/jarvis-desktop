@@ -10,11 +10,11 @@ import type {
   HelperManagementStatus,
   PairStatus,
 } from './types'
-import { releaseManifestUrl, selectPreferredDesktopAsset } from './clientUpdates'
+import { releaseManifestUrl, selectPreferredDesktopAsset, selectPreferredDesktopInstallAsset } from './clientUpdates'
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
-const CURRENT_DESKTOP_VERSION = '0.1.13'
+const CURRENT_DESKTOP_VERSION = '0.1.14'
 
 const helperMethods = [
   'host.fs.stat',
@@ -364,6 +364,7 @@ export async function checkDesktopClientUpdate(proxyUrl = ''): Promise<DesktopCl
     }
     const manifest = await response.json()
     const asset = selectPreferredDesktopAsset(manifest)
+    const installAsset = selectPreferredDesktopInstallAsset(manifest)
     const currentVersion = CURRENT_DESKTOP_VERSION
     const latestVersion = String(manifest.release?.version || '')
     return {
@@ -374,6 +375,7 @@ export async function checkDesktopClientUpdate(proxyUrl = ''): Promise<DesktopCl
       update_available: releaseUpdateAvailable(latestVersion, currentVersion),
       checked_at: new Date().toISOString(),
       asset,
+      install_asset: installAsset,
       all_assets: Array.isArray(manifest.clients?.desktop) ? manifest.clients.desktop : [],
     }
   }

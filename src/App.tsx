@@ -664,7 +664,7 @@ export default function App() {
           <article className="glass-card">
             <div className="card-header">
               <h2>客户端更新</h2>
-              <span className="micro-note">macOS 支持安装更新并退出；未签名/未公证版本可能需要手动强制打开。GitHub 慢时可配置更新专用代理。</span>
+              <span className="micro-note">macOS 使用 DMG 安装并退出；Windows 使用 MSI 静默安装并尝试重启。GitHub 慢时可配置更新专用代理。</span>
             </div>
             <label className="field">
               <span>更新代理 URL</span>
@@ -707,6 +707,10 @@ export default function App() {
                 <dd>{clientUpdate?.asset?.name || '未匹配'}</dd>
               </div>
               <div>
+                <dt>自动安装包</dt>
+                <dd>{clientUpdate?.install_asset?.name || '未匹配'}</dd>
+              </div>
+              <div>
                 <dt>Manifest</dt>
                 <dd>{releaseManifestUrl()}</dd>
               </div>
@@ -736,13 +740,12 @@ export default function App() {
                 disabled={
                   clientUpdatePending
                   || !clientUpdate?.update_available
-                  || clientUpdate?.asset?.platform !== 'macos'
-                  || clientUpdate?.asset?.kind !== 'dmg'
+                  || !clientUpdate?.install_asset
                 }
                 onClick={() => void handleInstallClientUpdate()}
                 type="button"
               >
-                安装更新并退出（macOS）
+                自动安装更新
               </button>
             </div>
             {clientUpdateMessage ? <p className="flash flash-success">{clientUpdateMessage}</p> : null}

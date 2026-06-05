@@ -22,10 +22,14 @@ use tauri::{AppHandle, Manager};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 const HELPER_MANAGEMENT_MODE: &str = "app-managed";
 const DEFAULT_RELEASE_MANIFEST_URL: &str =
     "https://github.com/linshuboy/jarvisai-releases/releases/latest/download/release-manifest.json";
+#[cfg(target_os = "windows")]
+const WINDOWS_CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Clone)]
 struct HostdPaths {
@@ -265,10 +269,18 @@ fn unavailable_hostd_version(error: &str) -> Value {
     })
 }
 
+fn hide_windows_command(command: &mut Command) -> &mut Command {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    }
+    command
+}
+
 fn run_hostd_json(app: &AppHandle, args: &[&str]) -> Result<Value, String> {
     let bin = resolve_hostd_bin(app);
-    let output = Command::new(&bin)
-        .args(args)
+    let mut command = Command::new(&bin);
+    let output = hide_windows_command(command.args(args))
         .output()
         .map_err(|error| format!("failed to launch {}: {}", bin.display(), error))?;
     if !output.status.success() {
@@ -1228,13 +1240,23 @@ fn current_desktop_arch() -> &'static str {
     }
 }
 
-fn preferred_desktop_kinds() -> &'static [&'static str] {
+fn preferred_desktop_download_kinds() -> &'static [&'static str] {
     if cfg!(target_os = "macos") {
         &["dmg"]
     } else if cfg!(target_os = "windows") {
         &["exe", "msi"]
     } else {
         &["deb", "rpm"]
+    }
+}
+
+fn preferred_desktop_install_kinds() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        &["dmg"]
+    } else if cfg!(target_os = "windows") {
+        &["msi"]
+    } else {
+        &[]
     }
 }
 
@@ -1265,7 +1287,14 @@ fn fetch_release_manifest(
         .map_err(|error| format!("failed to decode release manifest: {}", error))
 }
 
-fn select_desktop_release_asset(manifest: &ClientReleaseManifest) -> Option<ClientReleaseAsset> {
+fn select_desktop_asset(
+    manifest: &ClientReleaseManifest,
+    preferred_kinds: &[&str],
+    allow_fallback: bool,
+) -> Option<ClientReleaseAsset> {
+    if preferred_kinds.is_empty() {
+        return None;
+    }
     let platform = current_desktop_platform();
     let arch = current_desktop_arch();
     let platform_assets = manifest
@@ -1285,7 +1314,7 @@ fn select_desktop_release_asset(manifest: &ClientReleaseManifest) -> Option<Clie
     } else {
         arch_assets
     };
-    for kind in preferred_desktop_kinds() {
+    for kind in preferred_kinds {
         if let Some(asset) = candidates
             .iter()
             .find(|asset| asset.kind.as_deref() == Some(*kind))
@@ -1293,7 +1322,19 @@ fn select_desktop_release_asset(manifest: &ClientReleaseManifest) -> Option<Clie
             return Some(asset.clone());
         }
     }
-    candidates.into_iter().next()
+    if allow_fallback {
+        candidates.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn select_desktop_release_asset(manifest: &ClientReleaseManifest) -> Option<ClientReleaseAsset> {
+    select_desktop_asset(manifest, preferred_desktop_download_kinds(), true)
+}
+
+fn select_desktop_install_asset(manifest: &ClientReleaseManifest) -> Option<ClientReleaseAsset> {
+    select_desktop_asset(manifest, preferred_desktop_install_kinds(), false)
 }
 
 fn download_dir() -> Result<PathBuf, String> {
@@ -1581,12 +1622,107 @@ fn launch_client_update_installer(
     Ok((target_app_path, log_path))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn client_update_installer_script() -> &'static str {
+    r#"
+param(
+  [Parameter(Mandatory=$true)][int]$AppPid,
+  [Parameter(Mandatory=$true)][string]$MsiPath,
+  [Parameter(Mandatory=$true)][string]$TargetExe,
+  [Parameter(Mandatory=$true)][string]$LogPath
+)
+
+$ErrorActionPreference = "Stop"
+
+function Write-InstallerLog {
+  param([string]$Message)
+  $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  Add-Content -Path $LogPath -Value "$timestamp $Message"
+}
+
+Write-InstallerLog "installer started target=$TargetExe msi=$MsiPath"
+
+try {
+  Wait-Process -Id $AppPid -Timeout 120 -ErrorAction SilentlyContinue
+} catch {
+  Write-InstallerLog "wait process failed: $($_.Exception.Message)"
+}
+
+$msi = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $MsiPath, "/qn", "/norestart") -Wait -PassThru
+Write-InstallerLog "msiexec exited with code $($msi.ExitCode)"
+if ($msi.ExitCode -ne 0) {
+  exit $msi.ExitCode
+}
+
+if (Test-Path -LiteralPath $TargetExe) {
+  Start-Process -FilePath $TargetExe
+  Write-InstallerLog "started $TargetExe"
+} else {
+  Write-InstallerLog "target exe not found after install: $TargetExe"
+}
+
+exit 0
+"#
+}
+
+#[cfg(target_os = "windows")]
+fn launch_client_update_installer(
+    _app: &AppHandle,
+    download_path: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    let target_exe_path = env::current_exe()
+        .map_err(|error| format!("failed to resolve current exe path for restart: {}", error))?;
+    let temp_dir = env::temp_dir();
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        now_iso().replace(':', "").replace('-', "")
+    );
+    let script_path = temp_dir.join(format!("agi-desktop-update-{}.ps1", suffix));
+    let log_path = temp_dir.join(format!("agi-desktop-update-{}.log", suffix));
+    fs::write(&script_path, client_update_installer_script()).map_err(|error| {
+        format!(
+            "failed to write installer script {}: {}",
+            script_path.display(),
+            error
+        )
+    })?;
+    let mut command = Command::new("powershell.exe");
+    command
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-File")
+        .arg(&script_path)
+        .arg("-AppPid")
+        .arg(std::process::id().to_string())
+        .arg("-MsiPath")
+        .arg(download_path)
+        .arg("-TargetExe")
+        .arg(&target_exe_path)
+        .arg("-LogPath")
+        .arg(&log_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    hide_windows_command(&mut command)
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "failed to launch installer script {}: {}",
+                script_path.display(),
+                error
+            )
+        })?;
+    Ok((target_exe_path, log_path))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn launch_client_update_installer(
     _app: &AppHandle,
     _download_path: &Path,
 ) -> Result<(PathBuf, PathBuf), String> {
-    Err(String::from("安装更新并退出当前仅支持 macOS"))
+    Err(String::from("自动安装更新当前仅支持 macOS 和 Windows"))
 }
 
 fn build_update_check_payload(
@@ -1599,6 +1735,7 @@ fn build_update_check_payload(
     let latest_version = manifest.release.version.clone();
     let update_available = release_update_available(&latest_version, &current_version);
     let asset = select_desktop_release_asset(manifest);
+    let install_asset = select_desktop_install_asset(manifest);
     json!({
         "manifest_url": manifest_url,
         "proxy_url": empty_to_none(proxy_url),
@@ -1607,6 +1744,7 @@ fn build_update_check_payload(
         "update_available": update_available,
         "checked_at": now_iso(),
         "asset": asset,
+        "install_asset": install_asset,
         "all_assets": manifest.clients.desktop.clone(),
         "release": {
             "channel": manifest.release.channel.clone(),
@@ -1884,6 +2022,7 @@ fn spawn_hostd(app: &AppHandle, paths: &HostdPaths) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    hide_windows_command(&mut command);
     command
         .spawn()
         .map_err(|error| format!("failed to launch helper {}: {}", bin.display(), error))?;
@@ -2433,10 +2572,19 @@ pub async fn desktop_install_client_update(
         let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
         let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
         let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
-        let asset = select_desktop_release_asset(&manifest)
+        let asset = select_desktop_install_asset(&manifest)
             .ok_or_else(|| String::from("当前平台没有可安装的桌面客户端包"))?;
-        if asset.platform.as_deref() != Some("macos") || asset.kind.as_deref() != Some("dmg") {
-            return Err(String::from("安装更新并退出当前仅支持 macOS DMG 安装包"));
+        if cfg!(target_os = "macos") {
+            if asset.platform.as_deref() != Some("macos") || asset.kind.as_deref() != Some("dmg") {
+                return Err(String::from("macOS 自动安装更新仅支持 DMG 安装包"));
+            }
+        } else if cfg!(target_os = "windows") {
+            if asset.platform.as_deref() != Some("windows") || asset.kind.as_deref() != Some("msi")
+            {
+                return Err(String::from("Windows 静默安装更新仅支持 MSI 安装包"));
+            }
+        } else {
+            return Err(String::from("自动安装更新当前仅支持 macOS 和 Windows"));
         }
         let (download_path, _sha256_verified) =
             download_release_asset(&asset, &normalized_proxy_url)?;

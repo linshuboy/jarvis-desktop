@@ -128,6 +128,7 @@ export type DesktopClientUpdateCheck = {
   update_available: boolean
   checked_at: string
   asset: ClientReleaseAsset | null
+  install_asset?: ClientReleaseAsset | null
   all_assets: ClientReleaseAsset[]
 }
 

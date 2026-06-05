@@ -38,6 +38,17 @@ export function currentDesktopPlatform(): string {
   return 'linux'
 }
 
+export function currentDesktopArch(): string | null {
+  const source = `${navigator.userAgent} ${navigator.platform}`.toLowerCase()
+  if (source.includes('arm64') || source.includes('aarch64')) {
+    return 'arm64'
+  }
+  if (source.includes('x86_64') || source.includes('x64') || source.includes('win64') || source.includes('amd64')) {
+    return 'amd64'
+  }
+  return null
+}
+
 export function preferredDesktopKinds(platform: string): string[] {
   if (platform === 'macos') {
     return ['dmg']
@@ -48,15 +59,44 @@ export function preferredDesktopKinds(platform: string): string[] {
   return ['deb', 'rpm']
 }
 
-export function selectPreferredDesktopAsset(manifest: ClientReleaseManifest): ClientReleaseAsset | null {
+export function preferredDesktopInstallKinds(platform: string): string[] {
+  if (platform === 'macos') {
+    return ['dmg']
+  }
+  if (platform === 'windows') {
+    return ['msi']
+  }
+  return []
+}
+
+function selectPreferredAssetByKinds(
+  manifest: ClientReleaseManifest,
+  preferredKinds: string[],
+  allowFallback: boolean,
+): ClientReleaseAsset | null {
+  if (!preferredKinds.length) {
+    return null
+  }
   const platform = currentDesktopPlatform()
-  const preferredKinds = preferredDesktopKinds(platform)
-  const assets = manifest.clients.desktop.filter((asset) => asset.platform === platform)
+  const arch = currentDesktopArch()
+  const platformAssets = manifest.clients.desktop.filter((asset) => asset.platform === platform)
+  const archAssets = arch ? platformAssets.filter((asset) => asset.arch === arch) : []
+  const assets = archAssets.length ? archAssets : platformAssets
   for (const kind of preferredKinds) {
     const matched = assets.find((asset) => asset.kind === kind)
     if (matched) {
       return matched
     }
   }
-  return assets[0] ?? null
+  return allowFallback ? (assets[0] ?? null) : null
+}
+
+export function selectPreferredDesktopAsset(manifest: ClientReleaseManifest): ClientReleaseAsset | null {
+  const platform = currentDesktopPlatform()
+  return selectPreferredAssetByKinds(manifest, preferredDesktopKinds(platform), true)
+}
+
+export function selectPreferredDesktopInstallAsset(manifest: ClientReleaseManifest): ClientReleaseAsset | null {
+  const platform = currentDesktopPlatform()
+  return selectPreferredAssetByKinds(manifest, preferredDesktopInstallKinds(platform), false)
 }
