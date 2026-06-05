@@ -45,6 +45,7 @@ const snapshot = {
   helper_management: {
     mode: 'systemd',
     data_root: '/tmp',
+    helper_log_path: '/tmp/hostd-helper.log',
   },
   status: {
     bridge_mode: 'tauri',

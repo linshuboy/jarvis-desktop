@@ -79,6 +79,7 @@ export type ConfigValidation =
 export type HelperManagementStatus = {
   mode: string
   data_root: string
+  helper_log_path: string
   startup_error?: string
 }
 

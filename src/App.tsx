@@ -882,6 +882,10 @@ export default function App() {
                     <dd>{snapshot.status.helper_available ? 'yes' : 'no'}</dd>
                   </div>
                   <div>
+                    <dt>Helper Log</dt>
+                    <dd>{snapshot.helper_management.helper_log_path || '未解析到'}</dd>
+                  </div>
+                  <div>
                     <dt>True Exit</dt>
                     <dd>stops helper</dd>
                   </div>

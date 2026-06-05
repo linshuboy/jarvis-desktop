@@ -38,6 +38,7 @@ struct HostdPaths {
     state_path: PathBuf,
     control_socket_path: PathBuf,
     auth_session_path: PathBuf,
+    helper_log_path: PathBuf,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -370,12 +371,14 @@ fn resolve_hostd_paths(app: &AppHandle) -> Result<HostdPaths, String> {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("auth-session.json");
+    let helper_log_path = data_root.join("hostd-helper.log");
     Ok(HostdPaths {
         data_root,
         config_path,
         state_path,
         control_socket_path,
         auth_session_path,
+        helper_log_path,
     })
 }
 
@@ -2010,6 +2013,29 @@ fn helper_available(_app: &AppHandle, paths: &HostdPaths) -> bool {
 
 fn spawn_hostd(app: &AppHandle, paths: &HostdPaths) -> Result<(), String> {
     let bin = resolve_hostd_bin(app);
+    let mut helper_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.helper_log_path)
+        .map_err(|error| {
+            format!(
+                "failed to open helper log {}: {}",
+                paths.helper_log_path.display(),
+                error
+            )
+        })?;
+    let _ = writeln!(
+        helper_log,
+        "\n{} launching helper: {} run --config {} --state {} --control-socket {}",
+        now_iso(),
+        bin.display(),
+        paths.config_path.display(),
+        paths.state_path.display(),
+        paths.control_socket_path.display()
+    );
+    let helper_stdout = helper_log
+        .try_clone()
+        .map_err(|error| format!("failed to clone helper log handle: {}", error))?;
     let mut command = Command::new(&bin);
     command
         .arg("run")
@@ -2020,8 +2046,8 @@ fn spawn_hostd(app: &AppHandle, paths: &HostdPaths) -> Result<(), String> {
         .arg("--control-socket")
         .arg(&paths.control_socket_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(helper_stdout))
+        .stderr(Stdio::from(helper_log));
     hide_windows_command(&mut command);
     command
         .spawn()
@@ -2047,8 +2073,9 @@ pub fn ensure_helper_running(app: &AppHandle) -> Result<(), String> {
         thread::sleep(Duration::from_millis(100));
     }
     Err(format!(
-        "helper did not become ready on {} after desktop startup",
-        paths.control_socket_path.display()
+        "helper did not become ready on {} after desktop startup; helper log: {}",
+        paths.control_socket_path.display(),
+        paths.helper_log_path.display()
     ))
 }
 
@@ -2395,6 +2422,7 @@ pub fn desktop_snapshot(app: AppHandle) -> Result<Value, String> {
         "helper_management": {
             "mode": HELPER_MANAGEMENT_MODE,
             "data_root": paths.data_root.display().to_string(),
+            "helper_log_path": paths.helper_log_path.display().to_string(),
             "startup_error": startup_error,
         },
     }))

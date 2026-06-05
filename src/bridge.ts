@@ -14,7 +14,7 @@ import { releaseManifestUrl, selectPreferredDesktopAsset, selectPreferredDesktop
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
-const CURRENT_DESKTOP_VERSION = '0.1.14'
+const CURRENT_DESKTOP_VERSION = '0.1.15'
 
 const helperMethods = [
   'host.fs.stat',
@@ -76,6 +76,7 @@ let mockConfigValidation: ConfigValidation = {
 let mockHelperManagement: HelperManagementStatus = {
   mode: 'app-managed',
   data_root: '~/Library/Application Support/Sunvisai Desktop/hostd',
+  helper_log_path: '~/Library/Application Support/Sunvisai Desktop/hostd/hostd-helper.log',
 }
 
 let mockAutostartStatus: AppAutostartStatus = {
