@@ -141,6 +141,18 @@ export type DesktopClientUpdateDownload = {
   downloaded_at: string
 }
 
+export type DesktopClientUpdateInstall = {
+  manifest_url: string
+  proxy_url?: string
+  release_version: string
+  asset: ClientReleaseAsset
+  download_path: string
+  installer_log_path: string
+  target_app_path: string
+  started_at: string
+  current_version: string
+}
+
 export type DesktopSnapshot = {
   bridge: string
   app_version: string

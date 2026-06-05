@@ -1180,6 +1180,20 @@ fn desktop_app_version(app: &AppHandle) -> String {
         .unwrap_or_else(|| app.package_info().version.to_string())
 }
 
+fn desktop_product_name(app: &AppHandle) -> String {
+    serde_json::from_str::<Value>(include_str!("../tauri.conf.json"))
+        .ok()
+        .and_then(|value| {
+            value
+                .get("productName")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| app.package_info().name.clone())
+}
+
 fn comparable_release_version(value: &str) -> String {
     value
         .trim()
@@ -1403,6 +1417,176 @@ fn download_release_asset(
         ));
     }
     Ok((target, !expected.is_empty()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_current_app_bundle_path() -> Option<PathBuf> {
+    let current_exe = env::current_exe().ok()?;
+    for ancestor in current_exe.ancestors() {
+        if ancestor
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("app"))
+            .unwrap_or(false)
+        {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn macos_target_app_path(app: &AppHandle) -> PathBuf {
+    if let Some(bundle_path) = macos_current_app_bundle_path() {
+        if bundle_path.starts_with("/Applications") {
+            return bundle_path;
+        }
+    }
+    PathBuf::from("/Applications").join(format!("{}.app", desktop_product_name(app)))
+}
+
+#[cfg(target_os = "macos")]
+fn client_update_installer_script() -> &'static str {
+    r#"#!/bin/sh
+set -u
+
+APP_PID="$1"
+DMG_PATH="$2"
+TARGET_APP="$3"
+LOG_PATH="$4"
+
+log() {
+  printf '%s %s\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG_PATH"
+}
+
+log "installer started target=$TARGET_APP dmg=$DMG_PATH"
+
+i=0
+while /bin/kill -0 "$APP_PID" >/dev/null 2>&1; do
+  if [ "$i" -ge 120 ]; then
+    log "timed out waiting for app pid $APP_PID to exit"
+    exit 1
+  fi
+  /bin/sleep 0.5
+  i=$((i + 1))
+done
+
+MOUNT_POINT="$(/usr/bin/mktemp -d /tmp/agi-desktop-update-mount.XXXXXX)" || exit 1
+cleanup() {
+  /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet >/dev/null 2>&1 || true
+  /bin/rmdir "$MOUNT_POINT" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+if ! /usr/bin/hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_POINT" >> "$LOG_PATH" 2>&1; then
+  log "failed to mount dmg"
+  exit 1
+fi
+
+SOURCE_APP="$(/usr/bin/find "$MOUNT_POINT" -maxdepth 2 -type d -name '*.app' -print -quit)"
+if [ -z "$SOURCE_APP" ]; then
+  log "no .app bundle found in dmg"
+  exit 1
+fi
+
+TARGET_PARENT="$(/usr/bin/dirname "$TARGET_APP")"
+if ! /bin/mkdir -p "$TARGET_PARENT" >> "$LOG_PATH" 2>&1; then
+  log "failed to create target parent $TARGET_PARENT"
+  exit 1
+fi
+
+BACKUP_APP=""
+if [ -e "$TARGET_APP" ]; then
+  BACKUP_APP="${TARGET_APP}.previous.$(/bin/date -u +%Y%m%d%H%M%S)"
+  if ! /bin/mv "$TARGET_APP" "$BACKUP_APP" >> "$LOG_PATH" 2>&1; then
+    log "failed to move existing app to backup $BACKUP_APP"
+    exit 1
+  fi
+fi
+
+if ! /usr/bin/ditto "$SOURCE_APP" "$TARGET_APP" >> "$LOG_PATH" 2>&1; then
+  log "failed to copy app bundle"
+  if [ -n "$BACKUP_APP" ] && [ -e "$BACKUP_APP" ]; then
+    /bin/mv "$BACKUP_APP" "$TARGET_APP" >> "$LOG_PATH" 2>&1 || true
+  fi
+  exit 1
+fi
+
+if [ -n "$BACKUP_APP" ] && [ -e "$BACKUP_APP" ]; then
+  /bin/rm -rf "$BACKUP_APP" >> "$LOG_PATH" 2>&1 || true
+fi
+
+log "installed successfully"
+exit 0
+"#
+}
+
+#[cfg(target_os = "macos")]
+fn launch_client_update_installer(
+    app: &AppHandle,
+    download_path: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = env::temp_dir();
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        now_iso().replace(':', "").replace('-', "")
+    );
+    let script_path = temp_dir.join(format!("agi-desktop-update-{}.sh", suffix));
+    let log_path = temp_dir.join(format!("agi-desktop-update-{}.log", suffix));
+    let target_app_path = macos_target_app_path(app);
+    fs::write(&script_path, client_update_installer_script()).map_err(|error| {
+        format!(
+            "failed to write installer script {}: {}",
+            script_path.display(),
+            error
+        )
+    })?;
+    let mut permissions = fs::metadata(&script_path)
+        .map_err(|error| {
+            format!(
+                "failed to stat installer script {}: {}",
+                script_path.display(),
+                error
+            )
+        })?
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&script_path, permissions).map_err(|error| {
+        format!(
+            "failed to chmod installer script {}: {}",
+            script_path.display(),
+            error
+        )
+    })?;
+    Command::new("/bin/sh")
+        .arg(&script_path)
+        .arg(std::process::id().to_string())
+        .arg(download_path)
+        .arg(&target_app_path)
+        .arg(&log_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "failed to launch installer script {}: {}",
+                script_path.display(),
+                error
+            )
+        })?;
+    Ok((target_app_path, log_path))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_client_update_installer(
+    _app: &AppHandle,
+    _download_path: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    Err(String::from("安装更新并退出当前仅支持 macOS"))
 }
 
 fn build_update_check_payload(
@@ -2236,6 +2420,51 @@ pub async fn desktop_download_client_update(
     })
     .await
     .map_err(|error| format!("client update download task failed: {}", error))?
+}
+
+#[tauri::command]
+pub async fn desktop_install_client_update(
+    app: AppHandle,
+    manifest_url: String,
+    proxy_url: String,
+) -> Result<Value, String> {
+    let exit_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
+        let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
+        let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
+        let asset = select_desktop_release_asset(&manifest)
+            .ok_or_else(|| String::from("当前平台没有可安装的桌面客户端包"))?;
+        if asset.platform.as_deref() != Some("macos") || asset.kind.as_deref() != Some("dmg") {
+            return Err(String::from("安装更新并退出当前仅支持 macOS DMG 安装包"));
+        }
+        let (download_path, _sha256_verified) =
+            download_release_asset(&asset, &normalized_proxy_url)?;
+        if let Ok(paths) = resolve_hostd_paths(&app) {
+            shutdown_helper_before_exit(&app, &paths)?;
+        }
+        let (target_app_path, installer_log_path) =
+            launch_client_update_installer(&app, &download_path)?;
+        Ok(json!({
+            "manifest_url": normalized_manifest_url,
+            "proxy_url": empty_to_none(&normalized_proxy_url),
+            "release_version": manifest.release.version,
+            "asset": asset,
+            "download_path": download_path.display().to_string(),
+            "installer_log_path": installer_log_path.display().to_string(),
+            "target_app_path": target_app_path.display().to_string(),
+            "started_at": now_iso(),
+            "current_version": desktop_app_version(&app),
+        }))
+    })
+    .await
+    .map_err(|error| format!("client update install task failed: {}", error))??;
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(800));
+        exit_app.exit(0);
+    });
+    Ok(result)
 }
 
 #[tauri::command]

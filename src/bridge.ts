@@ -2,6 +2,7 @@ import type {
   AppAutostartStatus,
   DesktopClientUpdateCheck,
   DesktopClientUpdateDownload,
+  DesktopClientUpdateInstall,
   ConfigValidation,
   DesktopAuthState,
   DesktopLoginResult,
@@ -13,7 +14,7 @@ import { releaseManifestUrl, selectPreferredDesktopAsset } from './clientUpdates
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
-const CURRENT_DESKTOP_VERSION = '0.1.11'
+const CURRENT_DESKTOP_VERSION = '0.1.12'
 
 const helperMethods = [
   'host.fs.stat',
@@ -390,6 +391,15 @@ export async function downloadDesktopClientUpdate(proxyUrl = ''): Promise<Deskto
     throw new Error(`浏览器预览模式不支持写入 Downloads，请打开 ${proxyFetchUrl(check.asset.url, proxyUrl)}`)
   }
   return invoke<DesktopClientUpdateDownload>('desktop_download_client_update', { manifestUrl, proxyUrl })
+}
+
+export async function installDesktopClientUpdate(proxyUrl = ''): Promise<DesktopClientUpdateInstall> {
+  const manifestUrl = releaseManifestUrl()
+  const invoke = await resolveInvoke()
+  if (invoke === null) {
+    throw new Error('浏览器预览模式不支持安装更新，请在 macOS 桌面客户端内操作')
+  }
+  return invoke<DesktopClientUpdateInstall>('desktop_install_client_update', { manifestUrl, proxyUrl })
 }
 
 export async function quitDesktopApplication(): Promise<void> {

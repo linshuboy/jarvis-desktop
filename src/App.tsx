@@ -17,6 +17,7 @@ import {
   checkDesktopClientUpdate,
   downloadDesktopClientUpdate,
   getDesktopSnapshot,
+  installDesktopClientUpdate,
   loginDesktop,
   logoutDesktop,
   quitDesktopApplication,
@@ -382,6 +383,21 @@ export default function App() {
     }
   }
 
+  async function handleInstallClientUpdate() {
+    const proxyUrl = clientUpdateProxyInput.trim()
+    writeStoredUpdateProxyUrl(proxyUrl)
+    setClientUpdatePending(true)
+    setClientUpdateMessage('')
+    setClientUpdateError('')
+    try {
+      const result = await installDesktopClientUpdate(proxyUrl)
+      setClientUpdateMessage(`安装器已启动，App 将退出。目标：${result.target_app_path}；日志：${result.installer_log_path}`)
+    } catch (nextError) {
+      setClientUpdateError(describeError(nextError, '安装客户端更新失败'))
+      setClientUpdatePending(false)
+    }
+  }
+
   async function handleQuitApplication() {
     setActionPending(true)
     setFlash('')
@@ -648,7 +664,7 @@ export default function App() {
           <article className="glass-card">
             <div className="card-header">
               <h2>客户端更新</h2>
-              <span className="micro-note">桌面端当前不执行静默安装；安装包会下载到系统默认下载文件夹。GitHub 慢时可配置更新专用代理。</span>
+              <span className="micro-note">macOS 支持安装更新并退出；未签名/未公证版本可能需要手动强制打开。GitHub 慢时可配置更新专用代理。</span>
             </div>
             <label className="field">
               <span>更新代理 URL</span>
@@ -714,6 +730,19 @@ export default function App() {
                 type="button"
               >
                 下载客户端文件
+              </button>
+              <button
+                className="button-muted"
+                disabled={
+                  clientUpdatePending
+                  || !clientUpdate?.update_available
+                  || clientUpdate?.asset?.platform !== 'macos'
+                  || clientUpdate?.asset?.kind !== 'dmg'
+                }
+                onClick={() => void handleInstallClientUpdate()}
+                type="button"
+              >
+                安装更新并退出（macOS）
               </button>
             </div>
             {clientUpdateMessage ? <p className="flash flash-success">{clientUpdateMessage}</p> : null}
