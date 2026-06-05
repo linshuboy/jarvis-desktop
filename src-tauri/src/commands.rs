@@ -1180,6 +1180,20 @@ fn desktop_app_version(app: &AppHandle) -> String {
         .unwrap_or_else(|| app.package_info().version.to_string())
 }
 
+fn comparable_release_version(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches('v')
+        .trim_start_matches('V')
+        .to_string()
+}
+
+fn release_update_available(latest_version: &str, current_version: &str) -> bool {
+    let latest = comparable_release_version(latest_version);
+    let current = comparable_release_version(current_version);
+    !latest.is_empty() && latest != current
+}
+
 fn current_desktop_platform() -> &'static str {
     if cfg!(target_os = "macos") {
         "macos"
@@ -1399,13 +1413,14 @@ fn build_update_check_payload(
 ) -> Value {
     let current_version = desktop_app_version(app);
     let latest_version = manifest.release.version.clone();
+    let update_available = release_update_available(&latest_version, &current_version);
     let asset = select_desktop_release_asset(manifest);
     json!({
         "manifest_url": manifest_url,
         "proxy_url": empty_to_none(proxy_url),
         "current_version": current_version,
         "latest_version": latest_version,
-        "update_available": !latest_version.is_empty() && latest_version != current_version,
+        "update_available": update_available,
         "checked_at": now_iso(),
         "asset": asset,
         "all_assets": manifest.clients.desktop.clone(),
@@ -2174,44 +2189,53 @@ pub fn desktop_set_app_autostart(app: AppHandle, enabled: bool) -> Result<Value,
 }
 
 #[tauri::command]
-pub fn desktop_check_client_update(
+pub async fn desktop_check_client_update(
     app: AppHandle,
     manifest_url: String,
     proxy_url: String,
 ) -> Result<Value, String> {
-    let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
-    let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
-    let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
-    Ok(build_update_check_payload(
-        &app,
-        &normalized_manifest_url,
-        &normalized_proxy_url,
-        &manifest,
-    ))
+    tauri::async_runtime::spawn_blocking(move || {
+        let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
+        let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
+        let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
+        Ok(build_update_check_payload(
+            &app,
+            &normalized_manifest_url,
+            &normalized_proxy_url,
+            &manifest,
+        ))
+    })
+    .await
+    .map_err(|error| format!("client update check task failed: {}", error))?
 }
 
 #[tauri::command]
-pub fn desktop_download_client_update(
+pub async fn desktop_download_client_update(
     app: AppHandle,
     manifest_url: String,
     proxy_url: String,
 ) -> Result<Value, String> {
-    let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
-    let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
-    let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
-    let asset = select_desktop_release_asset(&manifest)
-        .ok_or_else(|| String::from("当前平台没有可下载的桌面客户端包"))?;
-    let (download_path, sha256_verified) = download_release_asset(&asset, &normalized_proxy_url)?;
-    Ok(json!({
-        "manifest_url": normalized_manifest_url,
-        "proxy_url": empty_to_none(&normalized_proxy_url),
-        "release_version": manifest.release.version,
-        "asset": asset,
-        "download_path": download_path.display().to_string(),
-        "sha256_verified": sha256_verified,
-        "downloaded_at": now_iso(),
-        "current_version": desktop_app_version(&app),
-    }))
+    tauri::async_runtime::spawn_blocking(move || {
+        let normalized_manifest_url = normalize_manifest_url(&manifest_url)?;
+        let normalized_proxy_url = normalize_update_proxy_url(&proxy_url)?;
+        let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
+        let asset = select_desktop_release_asset(&manifest)
+            .ok_or_else(|| String::from("当前平台没有可下载的桌面客户端包"))?;
+        let (download_path, sha256_verified) =
+            download_release_asset(&asset, &normalized_proxy_url)?;
+        Ok(json!({
+            "manifest_url": normalized_manifest_url,
+            "proxy_url": empty_to_none(&normalized_proxy_url),
+            "release_version": manifest.release.version,
+            "asset": asset,
+            "download_path": download_path.display().to_string(),
+            "sha256_verified": sha256_verified,
+            "downloaded_at": now_iso(),
+            "current_version": desktop_app_version(&app),
+        }))
+    })
+    .await
+    .map_err(|error| format!("client update download task failed: {}", error))?
 }
 
 #[tauri::command]

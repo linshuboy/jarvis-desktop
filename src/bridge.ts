@@ -13,6 +13,8 @@ import { releaseManifestUrl, selectPreferredDesktopAsset } from './clientUpdates
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
+const CURRENT_DESKTOP_VERSION = '0.1.11'
+
 const helperMethods = [
   'host.fs.stat',
   'host.fs.list',
@@ -96,7 +98,7 @@ async function resolveInvoke(): Promise<TauriInvoke | null> {
 function buildMockSnapshot(): DesktopSnapshot {
   return {
     bridge: mockStatus.bridge_mode,
-    app_version: '0.1.9',
+    app_version: CURRENT_DESKTOP_VERSION,
     hostd_bin_path: '~/Library/Application Support/Sunvisai Desktop/hostd/macos-aarch64/hostd',
     app_close_action: 'hide',
     app_background_launch: false,
@@ -341,6 +343,16 @@ function proxyFetchUrl(url: string, proxyUrl: string): string {
   return `${trimmed.replace(/\/+$/, '')}/${url}`
 }
 
+function comparableReleaseVersion(value: string): string {
+  return value.trim().replace(/^[vV]/, '')
+}
+
+function releaseUpdateAvailable(latestVersion: string, currentVersion: string): boolean {
+  const latest = comparableReleaseVersion(latestVersion)
+  const current = comparableReleaseVersion(currentVersion)
+  return Boolean(latest && latest !== current)
+}
+
 export async function checkDesktopClientUpdate(proxyUrl = ''): Promise<DesktopClientUpdateCheck> {
   const manifestUrl = releaseManifestUrl()
   const invoke = await resolveInvoke()
@@ -351,12 +363,14 @@ export async function checkDesktopClientUpdate(proxyUrl = ''): Promise<DesktopCl
     }
     const manifest = await response.json()
     const asset = selectPreferredDesktopAsset(manifest)
+    const currentVersion = CURRENT_DESKTOP_VERSION
+    const latestVersion = String(manifest.release?.version || '')
     return {
       manifest_url: manifestUrl,
       proxy_url: proxyUrl.trim() || undefined,
-      current_version: '0.1.9',
-      latest_version: String(manifest.release?.version || ''),
-      update_available: String(manifest.release?.version || '') !== '0.1.9',
+      current_version: currentVersion,
+      latest_version: latestVersion,
+      update_available: releaseUpdateAvailable(latestVersion, currentVersion),
       checked_at: new Date().toISOString(),
       asset,
       all_assets: Array.isArray(manifest.clients?.desktop) ? manifest.clients.desktop : [],
