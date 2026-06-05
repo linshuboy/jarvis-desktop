@@ -1,6 +1,6 @@
 [package]
 name = "agi-desktop"
-version = "0.1.12"
+version = "0.1.13"
 description = "Sunvisai Desktop shell for Batch E"
 authors = ["Sunvisai"]
 edition = "2021"
