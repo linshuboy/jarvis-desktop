@@ -14,7 +14,7 @@ import { releaseManifestUrl, selectPreferredDesktopAsset, selectPreferredDesktop
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
-const CURRENT_DESKTOP_VERSION = '0.1.15'
+const CURRENT_DESKTOP_VERSION = '0.1.16'
 
 const helperMethods = [
   'host.fs.stat',
