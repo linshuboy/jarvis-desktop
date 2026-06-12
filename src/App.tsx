@@ -391,7 +391,7 @@ export default function App() {
     setClientUpdateError('')
     try {
       const result = await installDesktopClientUpdate(proxyUrl)
-      setClientUpdateMessage(`安装器已启动，App 将退出。目标：${result.target_app_path}；日志：${result.installer_log_path}`)
+      setClientUpdateMessage(`安装器已启动，App 将退出。请按系统安装器提示完成更新；目标：${result.target_app_path}；日志：${result.installer_log_path}`)
     } catch (nextError) {
       setClientUpdateError(describeError(nextError, '安装客户端更新失败'))
       setClientUpdatePending(false)
@@ -664,7 +664,7 @@ export default function App() {
           <article className="glass-card">
             <div className="card-header">
               <h2>客户端更新</h2>
-              <span className="micro-note">macOS 使用 DMG 安装并退出；Windows 使用 MSI 静默安装并尝试重启。GitHub 慢时可配置更新专用代理。</span>
+              <span className="micro-note">macOS 使用 DMG 安装并退出；Windows 打开 MSI 安装器并退出，避免后台静默安装被安全策略拦截。GitHub 慢时可配置更新专用代理。</span>
             </div>
             <label className="field">
               <span>更新代理 URL</span>
@@ -745,7 +745,7 @@ export default function App() {
                 onClick={() => void handleInstallClientUpdate()}
                 type="button"
               >
-                自动安装更新
+                启动安装器更新
               </button>
             </div>
             {clientUpdateMessage ? <p className="flash flash-success">{clientUpdateMessage}</p> : null}

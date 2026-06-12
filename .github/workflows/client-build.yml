@@ -292,7 +292,7 @@ jobs:
             printf 'desktop version mismatch: package=%s tauri=%s cargo=%s\n' "$package_version" "$tauri_version" "$cargo_version" >&2
             exit 1
           fi
-      - name: Build Windows desktop bundles
+      - name: Build Windows desktop executable
         env:
           RELEASE_TAG: ${{ steps.settings.outputs.release_tag }}
           SOURCE_SHA: ${{ steps.settings.outputs.source_sha }}
@@ -300,7 +300,15 @@ jobs:
           npm run build
           npm run build:icons
           npm run build:hostd
-          npx tauri build --bundles nsis,msi
+          npx tauri build --no-bundle
+      - name: Sign Windows sidecars and app
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+          WINDOWS_CODESIGN_REQUIRED: "true"
+        run: npm run sign:windows:prebundle
+      - name: Bundle Windows desktop installers
+        run: npx tauri bundle --bundles nsis,msi
       - name: Stage Windows desktop assets
         shell: bash
         run: |
@@ -309,6 +317,12 @@ jobs:
           find src-tauri/target/release/bundle/nsis -name '*.exe' -exec cp {} release-assets/ \;
           find src-tauri/target/release/bundle/msi -name '*.msi' -exec cp {} release-assets/ \;
           test "$(find release-assets -type f | wc -l)" -gt 0
+      - name: Sign staged Windows installers
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+          WINDOWS_CODESIGN_REQUIRED: "true"
+        run: npm run sign:windows:bundle
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows-bundles

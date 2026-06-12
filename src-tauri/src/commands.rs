@@ -218,11 +218,26 @@ fn resolve_hostd_bin(app: &AppHandle) -> PathBuf {
 
 fn command_error(bin: &Path, args: &[&str], stderr: &[u8]) -> String {
     let message = String::from_utf8_lossy(stderr).trim().to_string();
-    if message.is_empty() {
+    let normalized = if message.is_empty() {
         format!("{} {:?} failed", bin.display(), args)
     } else {
         message
+    };
+    diagnose_hostd_command_error(bin, normalized)
+}
+
+fn diagnose_hostd_command_error(bin: &Path, message: String) -> String {
+    if cfg!(target_os = "windows") {
+        let lower = message.to_lowercase();
+        if lower.contains("dial unix") && lower.contains(r"\\.\pipe\") {
+            return format!(
+                "{}\n检测到随 App 分发的 hostd sidecar 仍在用 Unix socket 访问 Windows named pipe，说明当前安装包里的 hostd.exe 过旧。请重新构建/安装包含 Windows app control named pipe 支持的客户端包。Hostd Binary: {}",
+                message,
+                bin.display()
+            );
+        }
     }
+    message
 }
 
 fn stage_error(stage: &str, error: String) -> String {
@@ -1340,18 +1355,18 @@ fn select_desktop_install_asset(manifest: &ClientReleaseManifest) -> Option<Clie
     select_desktop_asset(manifest, preferred_desktop_install_kinds(), false)
 }
 
-fn download_dir() -> Result<PathBuf, String> {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(profile) = env::var("USERPROFILE") {
-            let trimmed = profile.trim();
-            if !trimmed.is_empty() {
-                return Ok(PathBuf::from(trimmed).join("Downloads"));
-            }
-        }
-    }
-    let home = home_dir()?;
-    Ok(home.join("Downloads"))
+fn desktop_download_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .download_dir()
+        .map_err(|error| format!("failed to resolve system Downloads directory: {}", error))
+}
+
+fn client_update_temp_download_dir() -> PathBuf {
+    env::temp_dir().join(format!(
+        "agi-desktop-client-update-{}-{}",
+        std::process::id(),
+        now_iso().replace(':', "").replace('-', "")
+    ))
 }
 
 fn safe_download_file_name(name: &str) -> String {
@@ -1395,9 +1410,10 @@ fn unique_download_path(directory: &Path, name: &str) -> PathBuf {
     directory.join(format!("{}-{}", safe_name, std::process::id()))
 }
 
-fn download_release_asset(
+fn download_release_asset_to_dir(
     asset: &ClientReleaseAsset,
     proxy_url: &str,
+    directory: &Path,
 ) -> Result<(PathBuf, bool), String> {
     let proxy = normalize_update_proxy_url(proxy_url)?;
     let url = proxied_url(asset.url.trim(), &proxy)?;
@@ -1410,10 +1426,9 @@ fn download_release_asset(
             ))
         }
     }
-    let directory = download_dir()?;
-    fs::create_dir_all(&directory).map_err(|error| {
+    fs::create_dir_all(directory).map_err(|error| {
         format!(
-            "failed to create Downloads directory {}: {}",
+            "failed to create client package directory {}: {}",
             directory.display(),
             error
         )
@@ -1626,97 +1641,43 @@ fn launch_client_update_installer(
 }
 
 #[cfg(target_os = "windows")]
-fn client_update_installer_script() -> &'static str {
-    r#"
-param(
-  [Parameter(Mandatory=$true)][int]$AppPid,
-  [Parameter(Mandatory=$true)][string]$MsiPath,
-  [Parameter(Mandatory=$true)][string]$TargetExe,
-  [Parameter(Mandatory=$true)][string]$LogPath
-)
-
-$ErrorActionPreference = "Stop"
-
-function Write-InstallerLog {
-  param([string]$Message)
-  $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-  Add-Content -Path $LogPath -Value "$timestamp $Message"
-}
-
-Write-InstallerLog "installer started target=$TargetExe msi=$MsiPath"
-
-try {
-  Wait-Process -Id $AppPid -Timeout 120 -ErrorAction SilentlyContinue
-} catch {
-  Write-InstallerLog "wait process failed: $($_.Exception.Message)"
-}
-
-$msi = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $MsiPath, "/qn", "/norestart") -Wait -PassThru
-Write-InstallerLog "msiexec exited with code $($msi.ExitCode)"
-if ($msi.ExitCode -ne 0) {
-  exit $msi.ExitCode
-}
-
-if (Test-Path -LiteralPath $TargetExe) {
-  Start-Process -FilePath $TargetExe
-  Write-InstallerLog "started $TargetExe"
-} else {
-  Write-InstallerLog "target exe not found after install: $TargetExe"
-}
-
-exit 0
-"#
-}
-
-#[cfg(target_os = "windows")]
 fn launch_client_update_installer(
     _app: &AppHandle,
     download_path: &Path,
 ) -> Result<(PathBuf, PathBuf), String> {
     let target_exe_path = env::current_exe()
         .map_err(|error| format!("failed to resolve current exe path for restart: {}", error))?;
-    let temp_dir = env::temp_dir();
-    let suffix = format!(
-        "{}-{}",
+    let log_path = env::temp_dir().join(format!(
+        "agi-desktop-update-{}-{}.log",
         std::process::id(),
         now_iso().replace(':', "").replace('-', "")
-    );
-    let script_path = temp_dir.join(format!("agi-desktop-update-{}.ps1", suffix));
-    let log_path = temp_dir.join(format!("agi-desktop-update-{}.log", suffix));
-    fs::write(&script_path, client_update_installer_script()).map_err(|error| {
+    ));
+    fs::write(
+        &log_path,
         format!(
-            "failed to write installer script {}: {}",
-            script_path.display(),
+            "{} launching visible Windows MSI installer: msiexec.exe /i {} /norestart\n",
+            now_iso(),
+            download_path.display()
+        ),
+    )
+    .map_err(|error| {
+        format!(
+            "failed to write installer log {}: {}",
+            log_path.display(),
             error
         )
     })?;
-    let mut command = Command::new("powershell.exe");
+    let mut command = Command::new("msiexec.exe");
     command
-        .arg("-NoProfile")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-File")
-        .arg(&script_path)
-        .arg("-AppPid")
-        .arg(std::process::id().to_string())
-        .arg("-MsiPath")
+        .arg("/i")
         .arg(download_path)
-        .arg("-TargetExe")
-        .arg(&target_exe_path)
-        .arg("-LogPath")
-        .arg(&log_path)
+        .arg("/norestart")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    hide_windows_command(&mut command)
+    command
         .spawn()
-        .map_err(|error| {
-            format!(
-                "failed to launch installer script {}: {}",
-                script_path.display(),
-                error
-            )
-        })?;
+        .map_err(|error| format!("failed to launch Windows MSI installer: {}", error))?;
     Ok((target_exe_path, log_path))
 }
 
@@ -2572,8 +2533,9 @@ pub async fn desktop_download_client_update(
         let manifest = fetch_release_manifest(&normalized_manifest_url, &normalized_proxy_url)?;
         let asset = select_desktop_release_asset(&manifest)
             .ok_or_else(|| String::from("当前平台没有可下载的桌面客户端包"))?;
+        let download_directory = desktop_download_dir(&app)?;
         let (download_path, sha256_verified) =
-            download_release_asset(&asset, &normalized_proxy_url)?;
+            download_release_asset_to_dir(&asset, &normalized_proxy_url, &download_directory)?;
         Ok(json!({
             "manifest_url": normalized_manifest_url,
             "proxy_url": empty_to_none(&normalized_proxy_url),
@@ -2609,13 +2571,14 @@ pub async fn desktop_install_client_update(
         } else if cfg!(target_os = "windows") {
             if asset.platform.as_deref() != Some("windows") || asset.kind.as_deref() != Some("msi")
             {
-                return Err(String::from("Windows 静默安装更新仅支持 MSI 安装包"));
+                return Err(String::from("Windows 安装更新仅支持 MSI 安装包"));
             }
         } else {
             return Err(String::from("自动安装更新当前仅支持 macOS 和 Windows"));
         }
+        let download_directory = client_update_temp_download_dir();
         let (download_path, _sha256_verified) =
-            download_release_asset(&asset, &normalized_proxy_url)?;
+            download_release_asset_to_dir(&asset, &normalized_proxy_url, &download_directory)?;
         if let Ok(paths) = resolve_hostd_paths(&app) {
             shutdown_helper_before_exit(&app, &paths)?;
         }

@@ -10,6 +10,8 @@
     "preview": "vite preview --host 127.0.0.1 --port 4174",
     "build:icons": "python3 ./scripts/generate_tauri_icons.py",
     "build:hostd": "bash ./scripts/build_hostd.sh",
+    "sign:windows:prebundle": "pwsh ./scripts/sign_windows_artifacts.ps1 -Phase prebundle",
+    "sign:windows:bundle": "pwsh ./scripts/sign_windows_artifacts.ps1 -Phase bundle",
     "tauri:dev": "npm run build:hostd && tauri dev",
     "tauri:build": "npm run build:hostd && tauri build",
     "tauri:build:linux": "bash ./scripts/build_linux_packages.sh"
