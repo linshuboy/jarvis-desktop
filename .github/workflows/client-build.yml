@@ -316,6 +316,7 @@ jobs:
           mkdir -p release-assets
           find src-tauri/target/release/bundle/nsis -name '*.exe' -exec cp {} release-assets/ \;
           find src-tauri/target/release/bundle/msi -name '*.msi' -exec cp {} release-assets/ \;
+          find certs -maxdepth 1 -name '*.cer' -exec cp {} release-assets/ \;
           test "$(find release-assets -type f | wc -l)" -gt 0
       - name: Sign staged Windows installers
         env:
