@@ -1789,6 +1789,7 @@ fn launch_client_update_installer(
 fn launch_client_update_installer(
     _app: &AppHandle,
     download_path: &Path,
+    _expected_version: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     let target_exe_path = env::current_exe()
         .map_err(|error| format!("failed to resolve current exe path for restart: {}", error))?;
