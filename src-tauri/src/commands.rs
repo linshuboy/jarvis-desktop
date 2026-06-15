@@ -1830,6 +1830,7 @@ fn launch_client_update_installer(
 fn launch_client_update_installer(
     _app: &AppHandle,
     _download_path: &Path,
+    _expected_version: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     Err(String::from("自动安装更新当前仅支持 macOS 和 Windows"))
 }

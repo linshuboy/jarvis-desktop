@@ -453,8 +453,6 @@ jobs:
           MACOS_CODESIGN_PASSWORD: ${{ secrets.MACOS_CODESIGN_PASSWORD }}
           MACOS_CODESIGN_ROOT_CERT_BASE64: ${{ secrets.MACOS_CODESIGN_ROOT_CERT_BASE64 }}
           MACOS_CODESIGN_REQUIRED: "false"
-          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
-          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
         run: npm run sign:macos:setup
       - name: Verify release version
         if: startsWith(steps.settings.outputs.release_tag, 'v')

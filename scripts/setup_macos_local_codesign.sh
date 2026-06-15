@@ -28,7 +28,7 @@ p12_password="${MACOS_CODESIGN_PASSWORD:-}"
 signing_source="macOS"
 
 if [[ -z "$p12_base64" || -z "$p12_password" ]]; then
-  if [[ "${MACOS_CODESIGN_ALLOW_WINDOWS_FALLBACK:-true}" == "true" ]]; then
+  if [[ "${MACOS_CODESIGN_ALLOW_WINDOWS_FALLBACK:-false}" == "true" ]]; then
     p12_base64="${WINDOWS_CODESIGN_PFX_BASE64:-}"
     p12_password="${WINDOWS_CODESIGN_PASSWORD:-}"
     signing_source="Windows fallback"
@@ -36,10 +36,10 @@ if [[ -z "$p12_base64" || -z "$p12_password" ]]; then
 fi
 
 if [[ -z "$p12_base64" ]]; then
-  fail_or_skip "MACOS_CODESIGN_P12_BASE64 is not configured and no reusable Windows PFX is available"
+  fail_or_skip "MACOS_CODESIGN_P12_BASE64 is not configured"
 fi
 if [[ -z "$p12_password" ]]; then
-  fail_or_skip "MACOS_CODESIGN_PASSWORD is not configured and no reusable Windows PFX password is available"
+  fail_or_skip "MACOS_CODESIGN_PASSWORD is not configured"
 fi
 
 decode_base64_file() {
