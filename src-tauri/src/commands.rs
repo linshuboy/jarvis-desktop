@@ -1226,6 +1226,20 @@ fn desktop_product_name(app: &AppHandle) -> String {
         .unwrap_or_else(|| app.package_info().name.clone())
 }
 
+fn desktop_bundle_identifier(app: &AppHandle) -> String {
+    serde_json::from_str::<Value>(include_str!("../tauri.conf.json"))
+        .ok()
+        .and_then(|value| {
+            value
+                .get("identifier")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| app.config().identifier.clone())
+}
+
 fn comparable_release_version(value: &str) -> String {
     value
         .trim()
@@ -1515,40 +1529,73 @@ APP_PID="$1"
 DMG_PATH="$2"
 TARGET_APP="$3"
 LOG_PATH="$4"
+EXPECTED_BUNDLE_ID="$5"
+EXPECTED_VERSION="$6"
+REQUIRE_NOTARIZATION="$7"
 
 log() {
   printf '%s %s\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG_PATH"
 }
 
-log "installer started target=$TARGET_APP dmg=$DMG_PATH"
-
-i=0
-while /bin/kill -0 "$APP_PID" >/dev/null 2>&1; do
-  if [ "$i" -ge 120 ]; then
-    log "timed out waiting for app pid $APP_PID to exit"
-    exit 1
-  fi
-  /bin/sleep 0.5
-  i=$((i + 1))
-done
-
-MOUNT_POINT="$(/usr/bin/mktemp -d /tmp/agi-desktop-update-mount.XXXXXX)" || exit 1
-cleanup() {
-  /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet >/dev/null 2>&1 || true
-  /bin/rmdir "$MOUNT_POINT" >/dev/null 2>&1 || true
+fail() {
+  log "$*"
+  exit 1
 }
-trap cleanup EXIT
 
-if ! /usr/bin/hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_POINT" >> "$LOG_PATH" 2>&1; then
-  log "failed to mount dmg"
-  exit 1
-fi
+validate_app_bundle() {
+  APP_PATH="$1"
+  INFO_PLIST="$APP_PATH/Contents/Info.plist"
+  if [ ! -d "$APP_PATH/Contents" ] || [ ! -f "$INFO_PLIST" ]; then
+    fail "invalid app bundle: $APP_PATH"
+  fi
 
-SOURCE_APP="$(/usr/bin/find "$MOUNT_POINT" -maxdepth 2 -type d -name '*.app' -print -quit)"
-if [ -z "$SOURCE_APP" ]; then
-  log "no .app bundle found in dmg"
-  exit 1
-fi
+  BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO_PLIST" 2>> "$LOG_PATH" || true)"
+  APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST" 2>> "$LOG_PATH" || true)"
+  if [ -n "$EXPECTED_BUNDLE_ID" ] && [ "$BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]; then
+    fail "bundle identifier mismatch: expected=$EXPECTED_BUNDLE_ID actual=$BUNDLE_ID"
+  fi
+  if [ -n "$EXPECTED_VERSION" ] && [ "$APP_VERSION" != "$EXPECTED_VERSION" ]; then
+    fail "bundle version mismatch: expected=$EXPECTED_VERSION actual=$APP_VERSION"
+  fi
+  if ! /usr/bin/codesign --verify --deep --strict "$APP_PATH" >> "$LOG_PATH" 2>&1; then
+    fail "codesign verification failed for $APP_PATH"
+  fi
+  if [ "$REQUIRE_NOTARIZATION" = "true" ]; then
+    if ! /usr/sbin/spctl --assess --type execute "$APP_PATH" >> "$LOG_PATH" 2>&1; then
+      fail "Gatekeeper assessment failed for $APP_PATH"
+    fi
+  else
+    /usr/sbin/spctl --assess --type execute "$APP_PATH" >> "$LOG_PATH" 2>&1 || \
+      log "Gatekeeper assessment did not pass; continuing because notarization is not required"
+  fi
+}
+
+can_replace_without_admin() {
+  TARGET_PARENT="$(/usr/bin/dirname "$TARGET_APP")"
+  if [ ! -d "$TARGET_PARENT" ]; then
+    return 1
+  fi
+  TEST_FILE="$TARGET_PARENT/.agi-update-write-test-$$"
+  if ! ( : > "$TEST_FILE" ) 2>/dev/null; then
+    return 1
+  fi
+  /bin/rm -f "$TEST_FILE" >/dev/null 2>&1 || true
+  return 0
+}
+
+write_replacement_script() {
+  REPLACE_SCRIPT="$1"
+  /bin/cat > "$REPLACE_SCRIPT" <<'REPLACE_SCRIPT_EOF'
+#!/bin/sh
+set -eu
+
+STAGING_APP="$1"
+TARGET_APP="$2"
+LOG_PATH="$3"
+
+log() {
+  printf '%s %s\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG_PATH"
+}
 
 TARGET_PARENT="$(/usr/bin/dirname "$TARGET_APP")"
 if ! /bin/mkdir -p "$TARGET_PARENT" >> "$LOG_PATH" 2>&1; then
@@ -1565,16 +1612,93 @@ if [ -e "$TARGET_APP" ]; then
   fi
 fi
 
-if ! /usr/bin/ditto "$SOURCE_APP" "$TARGET_APP" >> "$LOG_PATH" 2>&1; then
-  log "failed to copy app bundle"
+if ! /bin/mv "$STAGING_APP" "$TARGET_APP" >> "$LOG_PATH" 2>&1; then
+  log "failed to move staged app into place"
   if [ -n "$BACKUP_APP" ] && [ -e "$BACKUP_APP" ]; then
     /bin/mv "$BACKUP_APP" "$TARGET_APP" >> "$LOG_PATH" 2>&1 || true
   fi
   exit 1
 fi
 
+/usr/bin/xattr -dr com.apple.quarantine "$TARGET_APP" >> "$LOG_PATH" 2>&1 || true
+
 if [ -n "$BACKUP_APP" ] && [ -e "$BACKUP_APP" ]; then
   /bin/rm -rf "$BACKUP_APP" >> "$LOG_PATH" 2>&1 || true
+fi
+
+log "replacement completed"
+exit 0
+REPLACE_SCRIPT_EOF
+  /bin/chmod 700 "$REPLACE_SCRIPT"
+}
+
+write_authorize_script() {
+  AUTHORIZE_SCRIPT="$1"
+  /bin/cat > "$AUTHORIZE_SCRIPT" <<'AUTHORIZE_SCRIPT_EOF'
+on run argv
+  set replaceScript to item 1 of argv
+  set stagingApp to item 2 of argv
+  set targetApp to item 3 of argv
+  set logPath to item 4 of argv
+  set commandText to "/bin/sh " & quoted form of replaceScript & " " & quoted form of stagingApp & " " & quoted form of targetApp & " " & quoted form of logPath
+  do shell script commandText with administrator privileges
+end run
+AUTHORIZE_SCRIPT_EOF
+}
+
+replace_app_bundle() {
+  REPLACE_SCRIPT="$STAGING_ROOT/replace-app.sh"
+  AUTHORIZE_SCRIPT="$STAGING_ROOT/authorize-replace.applescript"
+  write_replacement_script "$REPLACE_SCRIPT"
+  if can_replace_without_admin; then
+    log "replacing app without administrator privileges"
+    /bin/sh "$REPLACE_SCRIPT" "$STAGING_APP" "$TARGET_APP" "$LOG_PATH"
+    return $?
+  fi
+  log "administrator privileges are required to replace $TARGET_APP"
+  write_authorize_script "$AUTHORIZE_SCRIPT"
+  /usr/bin/osascript "$AUTHORIZE_SCRIPT" "$REPLACE_SCRIPT" "$STAGING_APP" "$TARGET_APP" "$LOG_PATH" >> "$LOG_PATH" 2>&1
+}
+
+log "installer started target=$TARGET_APP dmg=$DMG_PATH"
+
+i=0
+while /bin/kill -0 "$APP_PID" >/dev/null 2>&1; do
+  if [ "$i" -ge 120 ]; then
+    fail "timed out waiting for app pid $APP_PID to exit"
+  fi
+  /bin/sleep 0.5
+  i=$((i + 1))
+done
+
+MOUNT_POINT="$(/usr/bin/mktemp -d /tmp/agi-desktop-update-mount.XXXXXX)" || exit 1
+STAGING_ROOT="$(/usr/bin/mktemp -d /tmp/agi-desktop-update-stage.XXXXXX)" || exit 1
+cleanup() {
+  /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet >/dev/null 2>&1 || true
+  /bin/rmdir "$MOUNT_POINT" >/dev/null 2>&1 || true
+  /bin/rm -rf "$STAGING_ROOT" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+if ! /usr/bin/hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_POINT" >> "$LOG_PATH" 2>&1; then
+  fail "failed to mount dmg"
+fi
+
+SOURCE_APP="$(/usr/bin/find "$MOUNT_POINT" -maxdepth 2 -type d -name '*.app' -print -quit)"
+if [ -z "$SOURCE_APP" ]; then
+  fail "no .app bundle found in dmg"
+fi
+
+STAGING_APP="$STAGING_ROOT/$(/usr/bin/basename "$TARGET_APP")"
+if ! /usr/bin/ditto "$SOURCE_APP" "$STAGING_APP" >> "$LOG_PATH" 2>&1; then
+  fail "failed to stage app bundle"
+fi
+
+validate_app_bundle "$STAGING_APP"
+/usr/bin/xattr -dr com.apple.quarantine "$STAGING_APP" >> "$LOG_PATH" 2>&1 || true
+
+if ! replace_app_bundle; then
+  fail "failed to replace installed app"
 fi
 
 log "installed successfully"
@@ -1586,6 +1710,7 @@ exit 0
 fn launch_client_update_installer(
     app: &AppHandle,
     download_path: &Path,
+    expected_version: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -1598,6 +1723,17 @@ fn launch_client_update_installer(
     let script_path = temp_dir.join(format!("agi-desktop-update-{}.sh", suffix));
     let log_path = temp_dir.join(format!("agi-desktop-update-{}.log", suffix));
     let target_app_path = macos_target_app_path(app);
+    let expected_bundle_id = desktop_bundle_identifier(app);
+    let expected_version = comparable_release_version(expected_version);
+    let require_notarization = env::var("AGI_MACOS_UPDATE_REQUIRE_NOTARIZATION")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
     fs::write(&script_path, client_update_installer_script()).map_err(|error| {
         format!(
             "failed to write installer script {}: {}",
@@ -1628,6 +1764,13 @@ fn launch_client_update_installer(
         .arg(download_path)
         .arg(&target_app_path)
         .arg(&log_path)
+        .arg(&expected_bundle_id)
+        .arg(&expected_version)
+        .arg(if require_notarization {
+            "true"
+        } else {
+            "false"
+        })
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -2600,7 +2743,7 @@ pub async fn desktop_install_client_update(
             shutdown_helper_before_exit(&app, &paths)?;
         }
         let (target_app_path, installer_log_path) =
-            launch_client_update_installer(&app, &download_path)?;
+            launch_client_update_installer(&app, &download_path, &manifest.release.version)?;
         Ok(json!({
             "manifest_url": normalized_manifest_url,
             "proxy_url": empty_to_none(&normalized_proxy_url),

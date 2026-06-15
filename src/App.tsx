@@ -664,7 +664,7 @@ export default function App() {
           <article className="glass-card">
             <div className="card-header">
               <h2>客户端更新</h2>
-              <span className="micro-note">macOS 使用 DMG 安装并退出；Windows 打开 MSI 安装器并退出，避免后台静默安装被安全策略拦截。GitHub 慢时可配置更新专用代理。</span>
+              <span className="micro-note">macOS 校验 DMG 内 App 签名与版本，必要时请求管理员授权后覆盖安装；Windows 打开 MSI 安装器并退出，避免后台静默安装被安全策略拦截。GitHub 慢时可配置更新专用代理。</span>
             </div>
             <label className="field">
               <span>更新代理 URL</span>
