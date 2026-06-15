@@ -447,6 +447,15 @@ jobs:
         run: rustup target add "${{ matrix.tauri_target }}"
       - name: Install desktop dependencies
         run: npm ci
+      - name: Setup macOS local code signing
+        env:
+          MACOS_CODESIGN_P12_BASE64: ${{ secrets.MACOS_CODESIGN_P12_BASE64 }}
+          MACOS_CODESIGN_PASSWORD: ${{ secrets.MACOS_CODESIGN_PASSWORD }}
+          MACOS_CODESIGN_ROOT_CERT_BASE64: ${{ secrets.MACOS_CODESIGN_ROOT_CERT_BASE64 }}
+          MACOS_CODESIGN_REQUIRED: "false"
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        run: npm run sign:macos:setup
       - name: Verify release version
         if: startsWith(steps.settings.outputs.release_tag, 'v')
         run: |
@@ -469,7 +478,7 @@ jobs:
           npm run build
           npm run build:icons
           GOOS=darwin GOARCH=${{ matrix.goarch }} TARGET_TRIPLE=${{ matrix.tauri_target }} npm run build:hostd
-          npx tauri build --target "${{ matrix.tauri_target }}" --bundles app,dmg
+          npx tauri build --target "${{ matrix.tauri_target }}" --bundles app,dmg $TAURI_CONFIG_ARGS
       - name: Stage macOS desktop assets
         shell: bash
         run: |

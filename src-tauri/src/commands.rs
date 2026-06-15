@@ -337,6 +337,8 @@ struct PersistedState {
 
 #[derive(Default, Deserialize, Serialize)]
 struct SocketSnapshot {
+    bridge_mode: Option<String>,
+    helper_available: Option<bool>,
     runtime_id: Option<String>,
     pairing_state: Option<String>,
     has_runtime_token: bool,
@@ -1968,8 +1970,23 @@ fn should_request_helper_reconnect(snapshot: &SocketSnapshot) -> bool {
     )
 }
 
+fn snapshot_helper_available(snapshot: &SocketSnapshot) -> bool {
+    if let Some(helper_available) = snapshot.helper_available {
+        return helper_available;
+    }
+    if matches!(
+        snapshot.bridge_mode.as_deref(),
+        Some("state-fallback" | "snapshot-fallback")
+    ) {
+        return false;
+    }
+    true
+}
+
 fn helper_available(_app: &AppHandle, paths: &HostdPaths) -> bool {
-    helper_snapshot(_app, paths).is_ok()
+    helper_snapshot(_app, paths)
+        .map(|snapshot| snapshot_helper_available(&snapshot))
+        .unwrap_or(false)
 }
 
 fn spawn_hostd(app: &AppHandle, paths: &HostdPaths) -> Result<(), String> {
@@ -2627,7 +2644,7 @@ pub fn desktop_quit_application(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::{
         api_url, normalize_server_url, read_state_file, should_request_helper_reconnect,
-        SocketSnapshot,
+        snapshot_helper_available, SocketSnapshot,
     };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2682,6 +2699,25 @@ mod tests {
             ..SocketSnapshot::default()
         };
         assert!(!should_request_helper_reconnect(&unpaired));
+    }
+
+    #[test]
+    fn helper_availability_uses_snapshot_flag() {
+        let fallback = SocketSnapshot {
+            bridge_mode: Some(String::from("state-fallback")),
+            helper_available: Some(false),
+            ..SocketSnapshot::default()
+        };
+        assert!(!snapshot_helper_available(&fallback));
+
+        let direct = SocketSnapshot {
+            helper_available: Some(true),
+            ..SocketSnapshot::default()
+        };
+        assert!(snapshot_helper_available(&direct));
+
+        let legacy_direct_socket = SocketSnapshot::default();
+        assert!(snapshot_helper_available(&legacy_direct_socket));
     }
 
     #[test]
