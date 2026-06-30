@@ -97,8 +97,6 @@ jobs:
           repository: ${{ steps.settings.outputs.source_repository }}
           ref: ${{ steps.settings.outputs.source_ref }}
           path: _main
-          sparse-checkout: |
-            packages/frontend
           token: ${{ secrets.CROSS_REPO_TOKEN }}
       - name: Link shared frontend package
         working-directory: .
@@ -255,8 +253,6 @@ jobs:
           repository: ${{ steps.settings.outputs.source_repository }}
           ref: ${{ steps.settings.outputs.source_ref }}
           path: _main
-          sparse-checkout: |
-            packages/frontend
           token: ${{ secrets.CROSS_REPO_TOKEN }}
       - name: Link shared frontend package
         working-directory: .
@@ -422,8 +418,6 @@ jobs:
           repository: ${{ steps.settings.outputs.source_repository }}
           ref: ${{ steps.settings.outputs.source_ref }}
           path: _main
-          sparse-checkout: |
-            packages/frontend
           token: ${{ secrets.CROSS_REPO_TOKEN }}
       - name: Link shared frontend package
         working-directory: .
