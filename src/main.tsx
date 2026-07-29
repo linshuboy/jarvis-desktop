@@ -1,11 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { frontendTokens, installCssVariables } from '@agi/frontend'
 
 import App from './App'
+import '@agi/frontend/web/styles.css'
 import './styles.css'
-
-installCssVariables(frontendTokens)
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

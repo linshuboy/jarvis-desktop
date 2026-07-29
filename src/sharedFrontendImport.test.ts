@@ -1,19 +1,18 @@
-import { ProcessTimeline, buildAgentProcessView, createCssVariables, digitalHumanModuleReady, frontendTokens, roleTones } from '@agi/frontend'
+import { buildAgentProcessView } from '@agi/frontend/agent'
+import { AgentProcessStream, createCssVariables, frontendTokens, roleTones } from '@agi/frontend/web'
 
 const desktopSharedImportSmoke = {
-  canvas: createCssVariables(frontendTokens)['--agi-color-bg-canvas'],
+  canvas: createCssVariables(frontendTokens)['--agi-surface-canvas'],
   assistantLabel: roleTones.assistant.label,
-  digitalHumanModuleReady,
   processVisibleEvents: buildAgentProcessView({ trace: { steps: [{ kind: 'plan_update', status: 'completed', summary: 'ok' }] } }).visibleEventCount,
-  processTimelineType: typeof ProcessTimeline,
+  processStreamType: typeof AgentProcessStream,
 }
 
 if (
   !desktopSharedImportSmoke.canvas ||
   desktopSharedImportSmoke.assistantLabel !== 'Assistant' ||
-  desktopSharedImportSmoke.digitalHumanModuleReady !== true ||
   desktopSharedImportSmoke.processVisibleEvents !== 1 ||
-  desktopSharedImportSmoke.processTimelineType !== 'function'
+  desktopSharedImportSmoke.processStreamType !== 'function'
 ) {
   throw new Error('Desktop failed to consume shared frontend tokens')
 }

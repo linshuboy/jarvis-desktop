@@ -1,4 +1,4 @@
-import { buildAgentProcessView, type AgentProcessView } from '@agi/frontend'
+import { buildAgentProcessView, type AgentProcessView } from '@agi/frontend/agent'
 
 import type { ConfigValidation, DesktopAuthState, DesktopSnapshot } from './types'
 

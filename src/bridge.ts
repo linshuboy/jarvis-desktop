@@ -89,9 +89,13 @@ let mockAutostartStatus: AppAutostartStatus = {
 }
 
 async function resolveInvoke(): Promise<TauriInvoke | null> {
+  const tauriRuntime = (globalThis as typeof globalThis & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  if (!tauriRuntime) {
+    return null
+  }
   try {
     const core = await import('@tauri-apps/api/core')
-    return core.invoke
+    return typeof core.invoke === 'function' ? core.invoke : null
   } catch {
     return null
   }

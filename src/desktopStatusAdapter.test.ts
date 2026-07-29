@@ -66,7 +66,12 @@ const snapshot = {
 } satisfies DesktopSnapshot
 
 const view = createDesktopRuntimeProcessView({ snapshot, effectiveAuth: auth, configValidation: config })
+const kinds = view.groups.flatMap((group) => group.events.map((event) => event.rawKind))
 
-if (view.visibleEventCount !== 4 || view.status !== 'running') {
-  throw new Error('Desktop runtime process adapter did not build the expected shared process view')
+if (
+  view.visibleEventCount !== 3
+  || view.status !== 'running'
+  || kinds.join(',') !== 'plan_update,compact_machine,finish'
+) {
+  throw new Error(`Desktop runtime process adapter mismatch: visible=${view.visibleEventCount}, status=${view.status}, kinds=${kinds.join(',')}`)
 }
